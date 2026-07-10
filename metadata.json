@@ -1,0 +1,6 @@
+{
+  "name": "ChatOnGame",
+  "description": "A lightweight premium messaging application with persistent floating chat bubble overlay and real-time Firebase support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
