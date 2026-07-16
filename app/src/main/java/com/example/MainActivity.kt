@@ -23,19 +23,6 @@ class MainActivity : ComponentActivity() {
 
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
 
-        // Add observer to manage floating bubble overlays when entering or leaving background
-        lifecycle.addObserver(LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_STOP -> {
-                    viewModel.startOverlayService(this)
-                }
-                Lifecycle.Event.ON_START -> {
-                    viewModel.stopOverlayService(this)
-                }
-                else -> {}
-            }
-        })
-
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -47,6 +34,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (this::viewModel.isInitialized) {
+            viewModel.stopOverlayService(this)
             viewModel.setTypingStatus(false)
             com.example.data.ChatRepository.updatePresence(true)
         }
@@ -56,6 +44,7 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         if (this::viewModel.isInitialized) {
             com.example.data.ChatRepository.updatePresence(false)
+            viewModel.startOverlayService(this)
         }
     }
 }

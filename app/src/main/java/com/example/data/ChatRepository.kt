@@ -7,6 +7,8 @@ import android.util.Log
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ValueEventListener
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +51,7 @@ object ChatRepository {
 
     // Fallback Mock database for offline/demo operation
     private val mockUsers = mutableMapOf<String, User>()
+    private val mockPasswords = mutableMapOf<String, String>()
     private val mockFriends = mutableMapOf<String, MutableSet<String>>() // uid -> set of friend uids
     private val mockFriendRequests = mutableListOf<FriendRequest>()
     private val mockChats = mutableListOf<Chat>()
@@ -79,6 +82,184 @@ object ChatRepository {
         }
     }
 
+    private var appContext: Context? = null
+
+    private val moshi by lazy {
+        Moshi.Builder()
+            .addLast(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+            .build()
+    }
+
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+        loadLocalState()
+    }
+
+    fun saveLocalState() {
+        val context = appContext ?: return
+        val prefs = context.getSharedPreferences("chatongame_local_prefs", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+
+        try {
+            // 1. Current user
+            val currentUserVal = _currentUser.value
+            if (currentUserVal != null) {
+                val userAdapter = moshi.adapter(User::class.java)
+                editor.putString("current_user_json", userAdapter.toJson(currentUserVal))
+            } else {
+                editor.remove("current_user_json")
+            }
+
+            // 2. Mock users
+            val usersList = mockUsers.values.toList()
+            val usersType = Types.newParameterizedType(List::class.java, User::class.java)
+            val usersAdapter = moshi.adapter<List<User>>(usersType)
+            editor.putString("mock_users_json", usersAdapter.toJson(usersList))
+
+            // 3. Mock friends map (Map<String, Set<String>>) -> Map<String, List<String>>
+            val friendsMapList = mockFriends.mapValues { it.value.toList() }
+            val friendsType = Types.newParameterizedType(Map::class.java, String::class.java, List::class.java)
+            val friendsAdapter = moshi.adapter<Map<String, List<String>>>(friendsType)
+            editor.putString("mock_friends_json", friendsAdapter.toJson(friendsMapList))
+
+            // 4. Mock friend requests
+            val requestsType = Types.newParameterizedType(List::class.java, FriendRequest::class.java)
+            val requestsAdapter = moshi.adapter<List<FriendRequest>>(requestsType)
+            editor.putString("mock_friend_requests_json", requestsAdapter.toJson(mockFriendRequests))
+
+            // 5. Mock chats
+            val chatsType = Types.newParameterizedType(List::class.java, Chat::class.java)
+            val chatsAdapter = moshi.adapter<List<Chat>>(chatsType)
+            editor.putString("mock_chats_json", chatsAdapter.toJson(mockChats))
+
+            // 6. Mock messages
+            val messagesType = Types.newParameterizedType(List::class.java, Message::class.java)
+            val messagesAdapter = moshi.adapter<List<Message>>(messagesType)
+            editor.putString("mock_messages_json", messagesAdapter.toJson(mockMessages))
+
+            // 7. Mock passwords
+            val passwordsType = Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
+            val passwordsAdapter = moshi.adapter<Map<String, String>>(passwordsType)
+            editor.putString("mock_passwords_json", passwordsAdapter.toJson(mockPasswords))
+
+            editor.apply()
+            Log.d(TAG, "Local state successfully saved to SharedPreferences.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving local state to SharedPreferences", e)
+        }
+    }
+
+    private fun loadLocalState() {
+        val context = appContext ?: return
+        val prefs = context.getSharedPreferences("chatongame_local_prefs", Context.MODE_PRIVATE)
+
+        try {
+            // 1. Mock users
+            val usersJson = prefs.getString("mock_users_json", null)
+            if (!usersJson.isNullOrEmpty()) {
+                val usersType = Types.newParameterizedType(List::class.java, User::class.java)
+                val usersAdapter = moshi.adapter<List<User>>(usersType)
+                val list = usersAdapter.fromJson(usersJson)
+                if (list != null) {
+                    mockUsers.clear()
+                    // Re-add bots first
+                    for (bot in gameBots) {
+                        mockUsers[bot.uid] = bot
+                    }
+                    for (user in list) {
+                        mockUsers[user.uid] = user
+                    }
+                }
+            }
+
+            // 2. Mock friends
+            val friendsJson = prefs.getString("mock_friends_json", null)
+            if (!friendsJson.isNullOrEmpty()) {
+                val friendsType = Types.newParameterizedType(Map::class.java, String::class.java, List::class.java)
+                val friendsAdapter = moshi.adapter<Map<String, List<String>>>(friendsType)
+                val map = friendsAdapter.fromJson(friendsJson)
+                if (map != null) {
+                    mockFriends.clear()
+                    for ((k, v) in map) {
+                        mockFriends[k] = v.toMutableSet()
+                    }
+                }
+            }
+
+            // 3. Mock friend requests
+            val requestsJson = prefs.getString("mock_friend_requests_json", null)
+            if (!requestsJson.isNullOrEmpty()) {
+                val requestsType = Types.newParameterizedType(List::class.java, FriendRequest::class.java)
+                val requestsAdapter = moshi.adapter<List<FriendRequest>>(requestsType)
+                val list = requestsAdapter.fromJson(requestsJson)
+                if (list != null) {
+                    mockFriendRequests.clear()
+                    mockFriendRequests.addAll(list)
+                }
+            }
+
+            // 4. Mock chats
+            val chatsJson = prefs.getString("mock_chats_json", null)
+            if (!chatsJson.isNullOrEmpty()) {
+                val chatsType = Types.newParameterizedType(List::class.java, Chat::class.java)
+                val chatsAdapter = moshi.adapter<List<Chat>>(chatsType)
+                val list = chatsAdapter.fromJson(chatsJson)
+                if (list != null) {
+                    mockChats.clear()
+                    mockChats.addAll(list)
+                }
+            }
+
+            // 5. Mock messages
+            val messagesJson = prefs.getString("mock_messages_json", null)
+            if (!messagesJson.isNullOrEmpty()) {
+                val messagesType = Types.newParameterizedType(List::class.java, Message::class.java)
+                val messagesAdapter = moshi.adapter<List<Message>>(messagesType)
+                val list = messagesAdapter.fromJson(messagesJson)
+                if (list != null) {
+                    mockMessages.clear()
+                    mockMessages.addAll(list)
+                }
+            }
+
+            // 6. Current user
+            val currentUserJson = prefs.getString("current_user_json", null)
+            if (!currentUserJson.isNullOrEmpty()) {
+                val userAdapter = moshi.adapter(User::class.java)
+                val user = userAdapter.fromJson(currentUserJson)
+                if (user != null) {
+                    // Update user as online
+                    val updatedUser = user.copy(isOnline = true, lastSeen = System.currentTimeMillis())
+                    mockUsers[user.uid] = updatedUser
+                    _currentUser.value = updatedUser
+                    
+                    if (FirebaseManager.isFirebaseAvailable) {
+                        startObservingRealtimeData(user.uid)
+                    } else {
+                        startObservingMockData(user.uid)
+                    }
+                    Log.d(TAG, "Restored local user session: ${user.username}")
+                }
+            }
+
+            // 7. Mock passwords
+            val passwordsJson = prefs.getString("mock_passwords_json", null)
+            if (!passwordsJson.isNullOrEmpty()) {
+                val passwordsType = Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
+                val passwordsAdapter = moshi.adapter<Map<String, String>>(passwordsType)
+                val map = passwordsAdapter.fromJson(passwordsJson)
+                if (map != null) {
+                    mockPasswords.clear()
+                    mockPasswords.putAll(map)
+                }
+            }
+
+            Log.d(TAG, "Local state successfully loaded from SharedPreferences.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading local state from SharedPreferences", e)
+        }
+    }
+
     // Helper: generate unique Friend ID (e.g. FC-X4M81Q)
     fun generateFriendId(): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -88,10 +269,25 @@ object ChatRepository {
         return "FC-$randomStr"
     }
 
-    fun signUp(email: String, usernameInput: String, onResult: (Result<User>) -> Unit) {
+    fun resetPasswordMock(email: String, passwordInput: String, onResult: (Result<Unit>) -> Unit) {
+        val user = mockUsers.values.find { it.email.equals(email, ignoreCase = true) }
+        if (user != null) {
+            mockPasswords[user.uid] = passwordInput
+            saveLocalState()
+            onResult(Result.success(Unit))
+        } else {
+            onResult(Result.failure(Exception("No user found with email: $email")))
+        }
+    }
+
+    fun signUp(email: String, usernameInput: String, passwordInput: String, onResult: (Result<User>) -> Unit) {
         val username = usernameInput.trim()
         if (username.isEmpty()) {
             onResult(Result.failure(Exception("Username cannot be empty")))
+            return
+        }
+        if (passwordInput.length < 6) {
+            onResult(Result.failure(Exception("Password must be at least 6 characters long.")))
             return
         }
 
@@ -105,9 +301,11 @@ object ChatRepository {
                     onResult(Result.failure(Exception("Username is already taken.")))
                 } else {
                     // Username unique, proceed with creating Firebase user
-                    auth.createUserWithEmailAndPassword(email, "password123").addOnCompleteListener { authTask ->
+                    auth.createUserWithEmailAndPassword(email, passwordInput).addOnCompleteListener { authTask ->
                         if (authTask.isSuccessful) {
-                            val uid = authTask.result.user?.uid ?: ""
+                            val fbUser = authTask.result.user
+                            fbUser?.sendEmailVerification() // Send verification email upon sign up
+                            val uid = fbUser?.uid ?: ""
                             val friendId = generateFriendId()
                             val newUser = User(uid, username, email, friendId, true, System.currentTimeMillis())
 
@@ -123,6 +321,7 @@ object ChatRepository {
                                     _currentUser.value = newUser
                                     onResult(Result.success(newUser))
                                     startObservingRealtimeData(uid)
+                                    saveLocalState()
                                 } else {
                                     onResult(Result.failure(dbTask.exception ?: Exception("Failed to write user database details.")))
                                 }
@@ -144,33 +343,45 @@ object ChatRepository {
             val newUser = User(uid, username, email, friendId, true, System.currentTimeMillis())
 
             mockUsers[uid] = newUser
+            mockPasswords[uid] = passwordInput
             _currentUser.value = newUser
             onResult(Result.success(newUser))
             startObservingMockData(uid)
+            saveLocalState()
         }
     }
 
-    fun login(email: String, usernameInput: String, onResult: (Result<User>) -> Unit) {
+    fun login(email: String, usernameInput: String, passwordInput: String, onResult: (Result<User>) -> Unit) {
         val username = usernameInput.trim()
         if (FirebaseManager.isFirebaseAvailable) {
             val auth = FirebaseManager.auth ?: return
             val db = FirebaseManager.database?.reference ?: return
 
             if (username.isNotEmpty()) {
-                // Login via username
-                db.child("usernames").child(username).get().addOnCompleteListener { task ->
-                    if (task.isSuccessful && task.result.exists()) {
-                        val uid = task.result.value as String
-                        db.child("users").child(uid).get().addOnCompleteListener { userTask ->
+                // Login via username - search case-insensitively in users node
+                db.child("users").get().addOnCompleteListener { usersTask ->
+                    var foundUid: String? = null
+                    if (usersTask.isSuccessful && usersTask.result.exists()) {
+                        for (child in usersTask.result.children) {
+                            val u = child.getValue(User::class.java)
+                            if (u != null && u.username.equals(username, ignoreCase = true)) {
+                                foundUid = u.uid
+                                break
+                            }
+                        }
+                    }
+                    
+                    if (foundUid != null) {
+                        db.child("users").child(foundUid).get().addOnCompleteListener { userTask ->
                             if (userTask.isSuccessful) {
                                 val user = userTask.result.getValue(User::class.java)
                                 if (user != null) {
-                                    // Sign in to firebase authentication
-                                    auth.signInWithEmailAndPassword(user.email, "password123").addOnCompleteListener { authTask ->
+                                    auth.signInWithEmailAndPassword(user.email, passwordInput).addOnCompleteListener { authTask ->
                                         if (authTask.isSuccessful) {
                                             _currentUser.value = user
                                             onResult(Result.success(user))
-                                            startObservingRealtimeData(uid)
+                                            startObservingRealtimeData(foundUid)
+                                            saveLocalState()
                                         } else {
                                             onResult(Result.failure(authTask.exception ?: Exception("Auth signin failed.")))
                                         }
@@ -183,12 +394,40 @@ object ChatRepository {
                             }
                         }
                     } else {
-                        onResult(Result.failure(Exception("Username does not exist. Please sign up.")))
+                        // Fallback to exact case usernames child if users query wasn't successful
+                        db.child("usernames").child(username).get().addOnCompleteListener { task ->
+                            if (task.isSuccessful && task.result.exists()) {
+                                val uid = task.result.value as String
+                                db.child("users").child(uid).get().addOnCompleteListener { userTask ->
+                                    if (userTask.isSuccessful) {
+                                        val user = userTask.result.getValue(User::class.java)
+                                        if (user != null) {
+                                            auth.signInWithEmailAndPassword(user.email, passwordInput).addOnCompleteListener { authTask ->
+                                                if (authTask.isSuccessful) {
+                                                    _currentUser.value = user
+                                                    onResult(Result.success(user))
+                                                    startObservingRealtimeData(uid)
+                                                    saveLocalState()
+                                                } else {
+                                                    onResult(Result.failure(authTask.exception ?: Exception("Auth signin failed.")))
+                                                }
+                                            }
+                                        } else {
+                                            onResult(Result.failure(Exception("User details not found.")))
+                                        }
+                                    } else {
+                                        onResult(Result.failure(userTask.exception ?: Exception("Error retrieving user info.")))
+                                    }
+                                }
+                            } else {
+                                onResult(Result.failure(Exception("Username does not exist. Please sign up.")))
+                            }
+                        }
                     }
                 }
             } else {
                 // Login via email
-                auth.signInWithEmailAndPassword(email, "password123").addOnCompleteListener { authTask ->
+                auth.signInWithEmailAndPassword(email, passwordInput).addOnCompleteListener { authTask ->
                     if (authTask.isSuccessful) {
                         val uid = authTask.result.user?.uid ?: ""
                         db.child("users").child(uid).get().addOnCompleteListener { userTask ->
@@ -198,6 +437,7 @@ object ChatRepository {
                                     _currentUser.value = user
                                     onResult(Result.success(user))
                                     startObservingRealtimeData(uid)
+                                    saveLocalState()
                                 } else {
                                     onResult(Result.failure(Exception("User details not found.")))
                                 }
@@ -219,11 +459,21 @@ object ChatRepository {
             }
 
             if (user != null) {
+                if (!user.uid.startsWith("bot_")) {
+                    val savedPassword = mockPasswords[user.uid]
+                    if (savedPassword != null && savedPassword != passwordInput) {
+                        onResult(Result.failure(Exception("Incorrect password.")))
+                        return
+                    } else if (savedPassword == null) {
+                        mockPasswords[user.uid] = passwordInput
+                    }
+                }
                 val updatedUser = user.copy(isOnline = true, lastSeen = System.currentTimeMillis())
                 mockUsers[user.uid] = updatedUser
                 _currentUser.value = updatedUser
                 onResult(Result.success(updatedUser))
                 startObservingMockData(user.uid)
+                saveLocalState()
             } else {
                 onResult(Result.failure(Exception("Account not found. Please sign up first.")))
             }
@@ -247,6 +497,7 @@ object ChatRepository {
         _friendRequests.value = emptyList()
         _recentChats.value = emptyList()
         _activeChatMessages.value = emptyList()
+        saveLocalState()
     }
 
     fun updateUsername(newUsername: String, onResult: (Result<Unit>) -> Unit) {
@@ -276,6 +527,7 @@ object ChatRepository {
                             val updatedUser = user.copy(username = cleanName)
                             _currentUser.value = updatedUser
                             onResult(Result.success(Unit))
+                            saveLocalState()
                         } else {
                             onResult(Result.failure(updateTask.exception ?: Exception("Failed to update username.")))
                         }
@@ -292,6 +544,7 @@ object ChatRepository {
             mockUsers[user.uid] = updatedUser
             _currentUser.value = updatedUser
             onResult(Result.success(Unit))
+            saveLocalState()
         }
     }
 
@@ -303,19 +556,41 @@ object ChatRepository {
         if (FirebaseManager.isFirebaseAvailable) {
             val db = FirebaseManager.database?.reference ?: return
 
-            // 1. Search user by username
-            db.child("usernames").child(searchQuery).get().addOnCompleteListener { userTask ->
-                if (userTask.isSuccessful && userTask.result.exists()) {
-                    val targetUid = userTask.result.value as String
-                    createAndSendRequest(user, targetUid, onResult)
+            // Search users node case-insensitively for username or friendId
+            db.child("users").get().addOnCompleteListener { task ->
+                if (task.isSuccessful && task.result.exists()) {
+                    var targetUid: String? = null
+                    for (child in task.result.children) {
+                        val u = child.getValue(User::class.java)
+                        if (u != null) {
+                            if (u.username.equals(searchQuery, ignoreCase = true) || 
+                                u.friendId.equals(searchQuery, ignoreCase = true)) {
+                                targetUid = u.uid
+                                break
+                            }
+                        }
+                    }
+                    
+                    if (targetUid != null) {
+                        createAndSendRequest(user, targetUid, onResult)
+                    } else {
+                        onResult(Result.failure(Exception("No user found with Username or Friend ID: $searchQuery")))
+                    }
                 } else {
-                    // 2. Search user by Friend ID
-                    db.child("friendIds").child(searchQuery).get().addOnCompleteListener { friendTask ->
-                        if (friendTask.isSuccessful && friendTask.result.exists()) {
-                            val targetUid = friendTask.result.value as String
-                            createAndSendRequest(user, targetUid, onResult)
+                    // Fallback to old path lookup just in case users list is empty or fails
+                    db.child("usernames").child(searchQuery).get().addOnCompleteListener { userTask ->
+                        if (userTask.isSuccessful && userTask.result.exists()) {
+                            val uid = userTask.result.value as String
+                            createAndSendRequest(user, uid, onResult)
                         } else {
-                            onResult(Result.failure(Exception("No user found with Username or Friend ID: $searchQuery")))
+                            db.child("friendIds").child(searchQuery).get().addOnCompleteListener { friendTask ->
+                                if (friendTask.isSuccessful && friendTask.result.exists()) {
+                                    val uid = friendTask.result.value as String
+                                    createAndSendRequest(user, uid, onResult)
+                                } else {
+                                    onResult(Result.failure(Exception("No user found with Username or Friend ID: $searchQuery")))
+                                }
+                            }
                         }
                     }
                 }
@@ -339,6 +614,7 @@ object ChatRepository {
                 // Trigger mock state update
                 triggerFriendRequestsUpdate(user.uid)
                 onResult(Result.success(Unit))
+                saveLocalState()
 
                 // If target is an automated game bot, automatically accept the request after a realistic delay!
                 if (targetUser.uid.startsWith("bot_")) {
@@ -399,6 +675,7 @@ object ChatRepository {
             // Trigger updates
             triggerFriendRequestsUpdate(request.toUid)
             triggerFriendsUpdate(request.toUid)
+            saveLocalState()
         }
     }
 
@@ -409,6 +686,7 @@ object ChatRepository {
         } else {
             mockFriendRequests.removeAll { it.id == request.id }
             triggerFriendRequestsUpdate(request.toUid)
+            saveLocalState()
         }
     }
 
@@ -425,6 +703,7 @@ object ChatRepository {
             mockFriends[user.uid]?.remove(friendUid)
             mockFriends[friendUid]?.remove(user.uid)
             triggerFriendsUpdate(user.uid)
+            saveLocalState()
         }
     }
 
@@ -451,6 +730,7 @@ object ChatRepository {
                 val newChat = Chat(chatId, sortedUids, "No messages yet", System.currentTimeMillis(), 0)
                 mockChats.add(newChat)
                 _recentChats.value = mockChats.toList()
+                saveLocalState()
             }
         }
         return chatId
@@ -486,6 +766,7 @@ object ChatRepository {
                 mockChats.add(Chat(chatId, listOf(user.uid, targetUid), text, System.currentTimeMillis(), 0))
             }
             _recentChats.value = mockChats.toList().sortedByDescending { it.lastMessageTimestamp }
+            saveLocalState()
 
             // Simulate Game Bot Automated Reply If receiver is a bot
             if (targetUid.startsWith("bot_")) {
@@ -528,6 +809,7 @@ object ChatRepository {
                 )
             }
             _recentChats.value = mockChats.toList().sortedByDescending { it.lastMessageTimestamp }
+            saveLocalState()
         }, 3200)
     }
 
@@ -541,6 +823,7 @@ object ChatRepository {
         }
         if (updated) {
             _activeChatMessages.value = mockMessages.filter { it.chatId == chatId }.sortedBy { it.timestamp }
+            saveLocalState()
         }
     }
 

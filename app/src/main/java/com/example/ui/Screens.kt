@@ -5,8 +5,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -71,6 +74,7 @@ fun AppNavigationContainer(viewModel: AppViewModel) {
                 AppScreen.SIGNUP -> SignUpScreen(viewModel)
                 AppScreen.DASHBOARD -> DashboardScreen(viewModel)
                 AppScreen.CHAT -> ChatScreen(viewModel)
+                AppScreen.VERIFY_EMAIL -> VerifyEmailScreen(viewModel)
             }
         }
 
@@ -89,8 +93,12 @@ fun AppNavigationContainer(viewModel: AppViewModel) {
 
 @Composable
 fun LoginScreen(viewModel: AppViewModel) {
+    val context = LocalContext.current
     var email by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var showForgotPasswordDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -179,11 +187,57 @@ fun LoginScreen(viewModel: AppViewModel) {
                         .testTag("username_input")
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Password field
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(imageVector = image, contentDescription = if (passwordVisible) "Hide password" else "Show password")
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = Color.Gray
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("password_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Forgot Password Clickable Text
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "Forgot Password?",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable { showForgotPasswordDialog = true }
+                            .padding(4.dp)
+                            .testTag("forgot_password_button")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Login action button
                 Button(
-                    onClick = { viewModel.login(email, username) },
+                    onClick = { viewModel.login(email, username, password) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
@@ -221,12 +275,302 @@ fun LoginScreen(viewModel: AppViewModel) {
             }
         }
     }
+
+    if (showForgotPasswordDialog) {
+        var forgotEmail by remember { mutableStateOf("") }
+        var resetCode by remember { mutableStateOf("") }
+        var newPassword by remember { mutableStateOf("") }
+        var isCodeSent by remember { mutableStateOf(false) }
+        var forgotPassVisible by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showForgotPasswordDialog = false },
+            containerColor = Color(0xFF1E293B),
+            title = {
+                Text(text = "Reset Arena Password", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Enter your registered email address below to reset your password.",
+                        color = Color.LightGray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = forgotEmail,
+                        onValueChange = { forgotEmail = it },
+                        label = { Text("Email Address") },
+                        singleLine = true,
+                        enabled = !isCodeSent,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray,
+                            disabledTextColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("forgot_email_input")
+                    )
+
+                    if (isCodeSent && !com.example.data.FirebaseManager.isFirebaseAvailable) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Simulation: A verification code '1234' was sent to your email. Enter code and new password below.",
+                            color = Color(0xFF10B981),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = resetCode,
+                            onValueChange = { resetCode = it },
+                            label = { Text("Verification Code") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("forgot_code_input")
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = newPassword,
+                            onValueChange = { newPassword = it },
+                            label = { Text("New Password (Min 6 chars)") },
+                            singleLine = true,
+                            visualTransformation = if (forgotPassVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            trailingIcon = {
+                                val iconImage = if (forgotPassVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                                IconButton(onClick = { forgotPassVisible = !forgotPassVisible }) {
+                                    Icon(imageVector = iconImage, contentDescription = "Toggle Visibility")
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("forgot_new_password_input")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (!isCodeSent) {
+                            if (forgotEmail.trim().isEmpty()) {
+                                Toast.makeText(context, "Please enter your email.", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            viewModel.sendPasswordResetEmail(forgotEmail) { result ->
+                                result.fold(
+                                    onSuccess = {
+                                        isCodeSent = true
+                                        if (com.example.data.FirebaseManager.isFirebaseAvailable) {
+                                            Toast.makeText(context, "Password reset link sent to your email!", Toast.LENGTH_LONG).show()
+                                            showForgotPasswordDialog = false
+                                        } else {
+                                            Toast.makeText(context, "Verification code sent (simulation)!", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    onFailure = { err ->
+                                        Toast.makeText(context, "Error: ${err.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
+                        } else {
+                            if (resetCode != "1234") {
+                                Toast.makeText(context, "Incorrect verification code. Please use '1234'.", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            if (newPassword.length < 6) {
+                                Toast.makeText(context, "Password must be at least 6 characters.", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            viewModel.resetPasswordMock(forgotEmail, newPassword) { result ->
+                                result.fold(
+                                    onSuccess = {
+                                        Toast.makeText(context, "Password reset successfully! Please login with your new password.", Toast.LENGTH_LONG).show()
+                                        showForgotPasswordDialog = false
+                                    },
+                                    onFailure = { err ->
+                                        Toast.makeText(context, "Error: ${err.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(text = if (!isCodeSent) "Send" else "Verify & Save", color = Color(0xFF0F172A))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForgotPasswordDialog = false }) {
+                    Text(text = "Cancel", color = Color.LightGray)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun VerifyEmailScreen(viewModel: AppViewModel) {
+    val context = LocalContext.current
+    val currentUser by viewModel.currentUser.collectAsState()
+    val emailText = currentUser?.email ?: "your email address"
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF022C22))
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.95f)),
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Email,
+                    contentDescription = "Verification Logo",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(72.dp)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Verify Your Account",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White,
+                    fontFamily = FontFamily.SansSerif
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "A verification email was sent to:",
+                    fontSize = 13.sp,
+                    color = Color.LightGray
+                )
+
+                Text(
+                    text = emailText,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF10B981)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Please open the link in the email to verify your address, then click 'I Verified' below to access the arena.",
+                    fontSize = 12.sp,
+                    color = Color.LightGray,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = {
+                        viewModel.checkEmailVerificationStatus { verified ->
+                            if (verified) {
+                                Toast.makeText(context, "Verification success! Welcome to the Lobby.", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Email is still unverified. Please check your inbox and spam folder.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("verify_status_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "I VERIFIED",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A),
+                        fontSize = 16.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        viewModel.resendVerificationEmail { success ->
+                            if (success) {
+                                Toast.makeText(context, "Verification email resent successfully!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Failed to resend. Please try again in a few moments.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("resend_verify_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color.Gray),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text(
+                        text = "RESEND EMAIL",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = "LOGOUT / BACK TO LOGIN",
+                    color = Color(0xFFEF4444),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable { viewModel.logout() }
+                        .padding(8.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable
 fun SignUpScreen(viewModel: AppViewModel) {
     var email by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -312,10 +656,37 @@ fun SignUpScreen(viewModel: AppViewModel) {
                         .testTag("signup_username_input")
                 )
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Password field
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password (Min 6 chars)") },
+                    singleLine = true,
+                    visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(imageVector = image, contentDescription = if (passwordVisible) "Hide password" else "Show password")
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = Color.Gray
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("signup_password_input")
+                )
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Button(
-                    onClick = { viewModel.signUp(email, username) },
+                    onClick = { viewModel.signUp(email, username, password) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
@@ -366,6 +737,10 @@ fun DashboardScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
     var activeTab by remember { mutableStateOf(0) } // 0 = Chats, 1 = Friends, 2 = Requests
     var showEditUsernameDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmationDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var hasOverlayPermission by remember { mutableStateOf(viewModel.checkOverlayPermission(context)) }
 
     // Synchronize permission checks when returning or focusing
@@ -378,6 +753,7 @@ fun DashboardScreen(viewModel: AppViewModel) {
             Column(
                 modifier = Modifier
                     .background(Color(0xFF0F172A))
+                    .statusBarsPadding()
                     .padding(top = 16.dp, start = 16.dp, end = 16.dp, bottom = 8.dp)
             ) {
                 // Main Header Row
@@ -402,15 +778,15 @@ fun DashboardScreen(viewModel: AppViewModel) {
                         )
                     }
 
-                    // Logout Icon Button
+                    // Settings Icon Button (Gears icon)
                     IconButton(
-                        onClick = { viewModel.logout() },
+                        onClick = { showSettingsDialog = true },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ExitToApp,
-                            contentDescription = "Logout",
-                            tint = Color.Red
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -631,6 +1007,263 @@ fun DashboardScreen(viewModel: AppViewModel) {
             dismissButton = {
                 TextButton(onClick = { showEditUsernameDialog = false }) {
                     Text("Cancel")
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // Settings Dialog
+    if (showSettingsDialog) {
+        var usernameInput by remember { mutableStateOf(currentUser?.username ?: "") }
+        
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings Icon",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "App Settings",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // Profile section
+                    Text(
+                        text = "PROFILE USERNAME",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = usernameInput,
+                            onValueChange = { usernameInput = it },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_username_input")
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (usernameInput.trim().isNotEmpty()) {
+                                    viewModel.updateUsername(usernameInput)
+                                    Toast.makeText(context, "Username updated!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Username cannot be empty", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Save", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text(
+                        text = "OPTIONS & INFORMATION",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // About Button
+                    OutlinedButton(
+                        onClick = { showAboutDialog = true },
+                        border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("about_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Info, contentDescription = "About", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("About Application", fontSize = 14.sp)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+                    
+                    // Privacy Policy Button
+                    OutlinedButton(
+                        onClick = { showPrivacyPolicyDialog = true },
+                        border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("privacy_policy_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Security, contentDescription = "Privacy Policy", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Privacy Policy", fontSize = 14.sp)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+                    
+                    // Logout Button
+                    Button(
+                        onClick = { showLogoutConfirmationDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("settings_logout_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.ExitToApp, contentDescription = "Logout", tint = Color.White)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Logout", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showSettingsDialog = false }
+                ) {
+                    Text("Close", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // Logout Confirmation Dialog
+    if (showLogoutConfirmationDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmationDialog = false },
+            title = { Text("Logout Warning", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to logout?", color = Color.LightGray) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirmationDialog = false
+                        showSettingsDialog = false
+                        viewModel.logout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                ) {
+                    Text("Logout", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirmationDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // About Application Dialog
+    if (showAboutDialog) {
+        AlertDialog(
+            onDismissRequest = { showAboutDialog = false },
+            title = { Text("About ChatOnGame", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "ChatOnGame is the ultimate overlay chat companion designed specifically for gamers.",
+                        color = Color.LightGray,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Features:\n• Real-time lobby chat\n• Dynamic overlay chat bubbles\n• Quick companion matches\n• Game presence status",
+                        color = Color.Gray,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Version: 1.1.0\nDeveloped with ♥ using Jetpack Compose & Firebase.",
+                        color = Color.DarkGray,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAboutDialog = false }) {
+                    Text("OK", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    // Privacy Policy Dialog
+    if (showPrivacyPolicyDialog) {
+        AlertDialog(
+            onDismissRequest = { showPrivacyPolicyDialog = false },
+            title = { Text("Privacy Policy", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = "Your privacy is extremely important to us. ChatOnGame complies with the standard security principles.",
+                        color = Color.LightGray,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "1. Data Collection:\nWe collect your username, email, and optionally profile info during sign-up to manage your account details.\n\n" +
+                               "2. Real-time Communication:\nAll chats, friend lists, and status updates are encrypted and stored in Google Firebase Realtime Database.\n\n" +
+                               "3. Security:\nYour password is secure with Firebase Authentication. We never share any of your private information with third parties.",
+                        color = Color.Gray,
+                        fontSize = 13.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPrivacyPolicyDialog = false }) {
+                    Text("Dismiss", color = MaterialTheme.colorScheme.primary)
                 }
             },
             containerColor = Color(0xFF1E293B)
@@ -1157,7 +1790,9 @@ fun ChatScreen(viewModel: AppViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF0F172A))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Chat text input box

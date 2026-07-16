@@ -18,9 +18,15 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import android.widget.Toast
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -37,6 +43,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,6 +91,8 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     private var isExpanded = false
     private var screenWidth = 1080
     private var screenHeight = 1920
+    private var closeLayout: FrameLayout? = null
+    private var isOverCloseZoneState = mutableStateOf(false)
 
     private var lastX = 0
     private var lastY = 0
@@ -130,7 +140,12 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     }
 
     private fun setupFloatingBubble() {
-        bubbleLayout = FrameLayout(this)
+        bubbleLayout = FrameLayout(this).apply {
+            // Bind lifecycle owners to the root container layout as well
+            setViewTreeLifecycleOwner(this@FloatingBubbleService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingBubbleService)
+            setViewTreeViewModelStoreOwner(this@FloatingBubbleService)
+        }
         
         // Window parameters
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -150,6 +165,7 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             gravity = Gravity.TOP or Gravity.START
             x = screenWidth - 200
             y = screenHeight / 3
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
 
         // Create ComposeView inside service container
@@ -170,12 +186,14 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
     @Composable
     fun BubbleOverlay() {
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
         var expanded by remember { mutableStateOf(false) }
         var currentX by remember { mutableStateOf(bubbleParams.x) }
         var currentY by remember { mutableStateOf(bubbleParams.y) }
+        var selectedCategory by remember { mutableStateOf("Football") }
 
         val activeChat = activeChatId ?: ""
-        val messages by ChatRepository.activeChatMessages.collectAsState()
         val friends by ChatRepository.friends.collectAsState()
         val currentUser by ChatRepository.currentUser.collectAsState()
 
@@ -184,11 +202,37 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             friends.find { it.uid == otherUid } ?: User("bot_apex", "ApexLegend", "apex@chatongame.com", "FC-A7K92P", true)
         }
 
-        // Sync messages for the active chat ID
-        LaunchedEffect(activeChat) {
-            if (activeChat.isNotEmpty()) {
-                ChatRepository.observeChatMessages(activeChat)
-            }
+        val footballMessages = listOf(
+            "Play fast! ⚡",
+            "Gooooool! ⚽",
+            "Come down! 😂",
+            "Nice play! 👍",
+            "Defend! 🛡️",
+            "Pass the ball! 🎯",
+            "Lucky win! 😉",
+            "Unlucky! 💔"
+        )
+
+        val chessMessages = listOf(
+            "CHECKMATE! 👑",
+            "Mate! ♟️",
+            "Nice move! 💡",
+            "Good game! 🤝",
+            "Hurry up! ⏱️",
+            "Draw? 🤝"
+        )
+
+        val generalMessages = listOf(
+            "Hello! 👋",
+            "Playing now! 🎮",
+            "Hold on... ⏳",
+            "GG! 🏆"
+        )
+
+        val messagesList = when (selectedCategory) {
+            "Football" -> footballMessages
+            "Chess" -> chessMessages
+            else -> generalMessages
         }
 
         Box(modifier = Modifier.wrapContentSize()) {
@@ -201,12 +245,23 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                         .background(Color(0xFF1E293B)) // Slate 800 dark theme base
                         .pointerInput(Unit) {
                             detectDragGestures(
+                                onDragStart = {
+                                    showCloseZone()
+                                },
                                 onDragEnd = {
-                                    // Snap to nearest screen edge horizontally
-                                    val targetX = if (bubbleParams.x < screenWidth / 2) 0 else screenWidth - 180
-                                    bubbleParams.x = targetX
-                                    windowManager.updateViewLayout(bubbleLayout, bubbleParams)
-                                    currentX = targetX
+                                    if (isOverCloseZoneState.value) {
+                                        stopSelf()
+                                    } else {
+                                        // Snap to nearest screen edge horizontally
+                                        val targetX = if (bubbleParams.x < screenWidth / 2) 0 else screenWidth - 180
+                                        bubbleParams.x = targetX
+                                        windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                                        currentX = targetX
+                                    }
+                                    hideCloseZone()
+                                },
+                                onDragCancel = {
+                                    hideCloseZone()
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
@@ -215,6 +270,14 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                                     windowManager.updateViewLayout(bubbleLayout, bubbleParams)
                                     currentX = bubbleParams.x
                                     currentY = bubbleParams.y
+                                    
+                                    // Check if over close zone (bottom center)
+                                    val bubbleCenterX = bubbleParams.x + 90
+                                    val bubbleCenterY = bubbleParams.y + 90
+                                    val closeCenterX = screenWidth / 2
+                                    val closeCenterY = screenHeight - 250
+                                    val dist = Math.hypot((bubbleCenterX - closeCenterX).toDouble(), (bubbleCenterY - closeCenterY).toDouble())
+                                    isOverCloseZoneState.value = dist < 220
                                 }
                             )
                         }
@@ -223,8 +286,10 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                             isExpanded = true
                             // Reconfigure window params to allow focus/keyboard typing inside the overlay!
                             bubbleParams.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                            bubbleParams.width = (screenWidth * 0.9).toInt()
-                            bubbleParams.height = (screenHeight * 0.5).toInt()
+                            bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                            val density = resources.displayMetrics.density
+                            bubbleParams.width = (330 * density).toInt()
+                            bubbleParams.height = (250 * density).toInt()
                             windowManager.updateViewLayout(bubbleLayout, bubbleParams)
                         },
                     contentAlignment = Alignment.Center
@@ -253,7 +318,8 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                         .fillMaxSize()
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color(0xFF0F172A)) // Slate 900 custom dark
-                        .padding(12.dp)
+                        .border(1.5.dp, Color(0xFF10B981).copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                        .padding(10.dp)
                 ) {
                     // Header
                     Row(
@@ -264,86 +330,125 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .size(8.dp)
                                     .clip(CircleShape)
                                     .background(if (recipient.isOnline) Color(0xFF10B981) else Color.Gray)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = recipient.username,
                                 color = Color.White,
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Row {
-                            // Back to small bubble
-                            IconButton(
-                                onClick = {
-                                    expanded = false
-                                    isExpanded = false
-                                    bubbleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                                    bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-                                    bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
-                                    windowManager.updateViewLayout(bubbleLayout, bubbleParams)
-                                }
+                        // Back to small bubble
+                        IconButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                expanded = false
+                                isExpanded = false
+                                bubbleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                                bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Minimize", tint = Color.LightGray, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    // Category Toggle Tabs
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val categories = listOf("Football", "Chess", "General")
+                        categories.forEach { cat ->
+                            val isSelected = selectedCategory == cat
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) Color(0xFF10B981) else Color(0xFF1E293B))
+                                    .clickable { selectedCategory = cat }
+                                    .padding(vertical = 5.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = "Minimize", tint = Color.LightGray)
+                                Text(
+                                    text = when(cat) {
+                                        "Football" -> "Football ⚽"
+                                        "Chess" -> "Chess ♟️"
+                                        else -> "General 💬"
+                                    },
+                                    color = if (isSelected) Color(0xFF0F172A) else Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
 
-                    // Divider
-                    HorizontalDivider(color = Color(0xFF334155), modifier = Modifier.padding(vertical = 4.dp))
+                    HorizontalDivider(color = Color(0xFF334155), modifier = Modifier.padding(vertical = 2.dp))
 
-                    // Chat list area
-                    Box(
+                    // Grid of Ready Quick Messages
+                    LazyColumn(
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
-                            .padding(8.dp)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Bottom
-                        ) {
-                            // Show last 3 messages to keep lightweight
-                            val lastMessages = messages.takeLast(4)
-                            if (lastMessages.isEmpty()) {
-                                Text(
-                                    "No messages yet. Send a response below!",
-                                    color = Color.Gray,
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                                )
-                            } else {
-                                lastMessages.forEach { msg ->
-                                    val isMe = msg.senderId == currentUser?.uid
+                        items(messagesList.chunked(2)) { pair ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                pair.forEach { text ->
                                     Box(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 2.dp),
-                                        contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF1E293B))
+                                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                ChatRepository.sendMessage(activeChat, text)
+                                                // Instant minimize for seamless gaming!
+                                                focusManager.clearFocus()
+                                                keyboardController?.hide()
+                                                expanded = false
+                                                isExpanded = false
+                                                bubbleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                                bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                                                bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                                bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                                windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                                                Toast.makeText(this@FloatingBubbleService, "Sent: $text", Toast.LENGTH_SHORT).show()
+                                            }
+                                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = msg.text,
+                                            text = text,
                                             color = Color.White,
-                                            fontSize = 13.sp,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(if (isMe) Color(0xFF3B82F6) else Color(0xFF475569))
-                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1
                                         )
                                     }
                                 }
+                                if (pair.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    // Message Reply Input Row
+                    // Message Reply Input Row (for custom typed messages)
                     var replyText by remember { mutableStateOf("") }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -352,22 +457,23 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .background(Color(0xFF1E293B), RoundedCornerShape(24.dp))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .background(Color(0xFF1E293B), RoundedCornerShape(16.dp))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             if (replyText.isEmpty()) {
-                                Text("Type response...", color = Color.Gray, fontSize = 14.sp)
+                                Text("Type response...", color = Color.Gray, fontSize = 12.sp)
                             }
                             BasicTextField(
                                 value = replyText,
                                 onValueChange = { replyText = it },
-                                textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
                                 cursorBrush = SolidColor(Color.White),
                                 modifier = Modifier.fillMaxWidth()
-                            )
+                             )
                         }
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
 
                         // Send Button
                         FloatingActionButton(
@@ -375,14 +481,25 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                                 if (replyText.trim().isNotEmpty()) {
                                     ChatRepository.sendMessage(activeChat, replyText.trim())
                                     replyText = ""
+                                    // Minimize immediately upon sending custom typed messages
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    expanded = false
+                                    isExpanded = false
+                                    bubbleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                    bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                                    bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                    bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                    windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                                    Toast.makeText(this@FloatingBubbleService, "Message sent!", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             containerColor = Color(0xFF10B981),
                             contentColor = Color.White,
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(34.dp),
                             shape = CircleShape
                         ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Send, contentDescription = "Send", modifier = Modifier.size(14.dp))
                         }
                     }
                 }
@@ -422,7 +539,106 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             .build()
     }
 
+    private fun showCloseZone() {
+        if (closeLayout != null) return
+        
+        closeLayout = FrameLayout(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingBubbleService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingBubbleService)
+            setViewTreeViewModelStoreOwner(this@FloatingBubbleService)
+        }
+        
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        
+        val closeParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            300, // height of close zone container
+            layoutFlag,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 100 // gap from the bottom of the screen
+        }
+        
+        val composeView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingBubbleService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingBubbleService)
+            setViewTreeViewModelStoreOwner(this@FloatingBubbleService)
+            setContent {
+                CloseZoneUI()
+            }
+        }
+        
+        closeLayout?.addView(composeView)
+        try {
+            windowManager.addView(closeLayout, closeParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    
+    private fun hideCloseZone() {
+        closeLayout?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        closeLayout = null
+        isOverCloseZoneState.value = false
+    }
+
+    @Composable
+    fun CloseZoneUI() {
+        val isOver by isOverCloseZoneState
+        val scale by animateFloatAsState(targetValue = if (isOver) 1.3f else 1.0f, label = "close_scale")
+        val containerColor = if (isOver) Color(0xFFEF4444) else Color(0x990F172A)
+        val iconColor = Color.White
+        
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .graphicsLayer(scaleX = scale, scaleY = scale)
+                        .clip(CircleShape)
+                        .background(containerColor)
+                        .border(1.5.dp, if (isOver) Color.White else Color(0xFFEF4444), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close Bubble",
+                        tint = iconColor,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isOver) "Release to Close" else "Drag here to Close",
+                    color = if (isOver) Color(0xFFEF4444) else Color.LightGray,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+
     override fun onDestroy() {
+        hideCloseZone()
         if (this::bubbleLayout.isInitialized) {
             try {
                 windowManager.removeView(bubbleLayout)

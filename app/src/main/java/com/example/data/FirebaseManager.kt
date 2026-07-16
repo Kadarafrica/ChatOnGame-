@@ -17,12 +17,14 @@ object FirebaseManager {
     fun initialize(context: Context) {
         try {
             val resId = context.resources.getIdentifier("google_app_id", "string", context.packageName)
-            if (resId != 0 && context.getString(resId).isNotEmpty()) {
+            val compiledAppId = if (resId != 0) context.getString(resId) else null
+            
+            if (!compiledAppId.isNullOrEmpty()) {
                 if (FirebaseApp.getApps(context).isEmpty()) {
                     FirebaseApp.initializeApp(context)
                 }
                 isFirebaseAvailable = true
-                Log.d(TAG, "Firebase initialized successfully.")
+                Log.d(TAG, "Firebase initialized successfully with google-services.json.")
             } else {
                 isFirebaseAvailable = false
                 Log.w(TAG, "Firebase google_app_id not found. App running in robust local offline mode.")
@@ -31,6 +33,8 @@ object FirebaseManager {
             isFirebaseAvailable = false
             Log.e(TAG, "Failed to initialize Firebase: ${e.message}. Falling back to offline mode.")
         }
+        // Initialize local persistence database backup
+        ChatRepository.initialize(context)
     }
 
     val auth: FirebaseAuth?
