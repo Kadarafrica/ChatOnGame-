@@ -1093,6 +1093,89 @@ fun DashboardScreen(viewModel: AppViewModel) {
                     
                     Spacer(modifier = Modifier.height(20.dp))
                     Text(
+                        text = "ACCOUNT SECURITY",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val isEmailVerified = if (com.example.data.FirebaseManager.isFirebaseAvailable) {
+                        com.example.data.FirebaseManager.auth?.currentUser?.isEmailVerified == true
+                    } else {
+                        true
+                    }
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isEmailVerified) Icons.Default.Security else Icons.Default.Warning,
+                                contentDescription = "Verification status",
+                                tint = if (isEmailVerified) Color(0xFF10B981) else Color(0xFFFBBF24),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (isEmailVerified) "Email Verified" else "Email Unverified",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = currentUser?.email ?: "",
+                                    color = Color.Gray,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val email = currentUser?.email
+                            if (!email.isNullOrEmpty()) {
+                                viewModel.sendPasswordResetEmail(email) { result ->
+                                    result.fold(
+                                        onSuccess = {
+                                            Toast.makeText(context, "Password reset email sent to $email!", Toast.LENGTH_LONG).show()
+                                        },
+                                        onFailure = { err ->
+                                            Toast.makeText(context, "Error: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                }
+                            } else {
+                                Toast.makeText(context, "No email address found.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("settings_reset_password_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Security, contentDescription = "Reset Password", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Reset / Change Password", fontSize = 14.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text(
                         text = "OPTIONS & INFORMATION",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
