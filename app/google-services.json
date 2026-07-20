@@ -2,6 +2,7 @@
   "project_info": {
     "project_number": "873201175757",
     "project_id": "chatongame-383b6",
+    "firebase_url": "https://chatongame-383b6-default-rtdb.europe-west1.firebasedatabase.app",
     "storage_bucket": "chatongame-383b6.firebasestorage.app"
   },
   "client": [

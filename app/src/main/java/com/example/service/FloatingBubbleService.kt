@@ -128,7 +128,7 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                 activeChatId = recent.id
             } else {
                 // If no chats exist, default to the first bot
-                activeChatId = ChatRepository.startChatWith("bot_apex")
+                activeChatId = ChatRepository.startChatWith("bot_speed")
             }
         }
 
@@ -199,7 +199,7 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
         val recipient = remember(activeChat, friends) {
             val otherUid = activeChat.replace("chat_", "").split("_").firstOrNull { it != currentUser?.uid }
-            friends.find { it.uid == otherUid } ?: User("bot_apex", "ApexLegend", "apex@chatongame.com", "FC-A7K92P", true)
+            friends.find { it.uid == otherUid } ?: User("bot_speed", "SpeedRunner", "speed@chatongame.com", "FC-X4M81Q", true)
         }
 
         val footballMessages = listOf(

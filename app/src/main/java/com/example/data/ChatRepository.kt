@@ -59,7 +59,6 @@ object ChatRepository {
 
     // Preset Gaming Bot Profiles for falling back gracefully when Firebase is offline
     private val gameBots = listOf(
-        User("bot_apex", "ApexLegend", "apex@chatongame.com", "FC-A7K92P", true, System.currentTimeMillis(), null, null),
         User("bot_speed", "SpeedRunner", "speed@chatongame.com", "FC-X4M81Q", true, System.currentTimeMillis(), null, null),
         User("bot_frag", "FragMaster", "frag@chatongame.com", "FC-B9R3LT", false, System.currentTimeMillis() - 120000, null, null)
     )
@@ -296,9 +295,11 @@ object ChatRepository {
             val db = FirebaseManager.database?.reference ?: return
 
             // 1. First check username uniqueness in database
-            db.child("usernames").child(username).get().addOnCompleteListener { task ->
+            db.child("usernames").child(username).get().withTimeout { task ->
                 if (task.isSuccessful && task.result.exists()) {
                     onResult(Result.failure(Exception("Username is already taken.")))
+                } else if (!task.isSuccessful) {
+                    onResult(Result.failure(task.exception ?: Exception("Failed to check username uniqueness.")))
                 } else {
                     // Username unique, proceed with creating Firebase user
                     auth.createUserWithEmailAndPassword(email, passwordInput).addOnCompleteListener { authTask ->
@@ -316,7 +317,7 @@ object ChatRepository {
                                 "/friendIds/$friendId" to uid
                             )
 
-                            db.updateChildren(updates).addOnCompleteListener { dbTask ->
+                            db.updateChildren(updates).withTimeout { dbTask ->
                                 if (dbTask.isSuccessful) {
                                     _currentUser.value = newUser
                                     onResult(Result.success(newUser))
@@ -359,7 +360,7 @@ object ChatRepository {
 
             if (username.isNotEmpty()) {
                 // Login via username - search case-insensitively in users node
-                db.child("users").get().addOnCompleteListener { usersTask ->
+                db.child("users").get().withTimeout { usersTask ->
                     var foundUid: String? = null
                     if (usersTask.isSuccessful && usersTask.result.exists()) {
                         for (child in usersTask.result.children) {
@@ -369,10 +370,13 @@ object ChatRepository {
                                 break
                             }
                         }
+                    } else if (!usersTask.isSuccessful) {
+                        onResult(Result.failure(usersTask.exception ?: Exception("Error checking users database.")))
+                        return@withTimeout
                     }
                     
                     if (foundUid != null) {
-                        db.child("users").child(foundUid).get().addOnCompleteListener { userTask ->
+                        db.child("users").child(foundUid).get().withTimeout { userTask ->
                             if (userTask.isSuccessful) {
                                 val user = userTask.result.getValue(User::class.java)
                                 if (user != null) {
@@ -395,10 +399,10 @@ object ChatRepository {
                         }
                     } else {
                         // Fallback to exact case usernames child if users query wasn't successful
-                        db.child("usernames").child(username).get().addOnCompleteListener { task ->
+                        db.child("usernames").child(username).get().withTimeout { task ->
                             if (task.isSuccessful && task.result.exists()) {
                                 val uid = task.result.value as String
-                                db.child("users").child(uid).get().addOnCompleteListener { userTask ->
+                                db.child("users").child(uid).get().withTimeout { userTask ->
                                     if (userTask.isSuccessful) {
                                         val user = userTask.result.getValue(User::class.java)
                                         if (user != null) {
@@ -419,6 +423,8 @@ object ChatRepository {
                                         onResult(Result.failure(userTask.exception ?: Exception("Error retrieving user info.")))
                                     }
                                 }
+                            } else if (!task.isSuccessful) {
+                                onResult(Result.failure(task.exception ?: Exception("Error checking username database.")))
                             } else {
                                 onResult(Result.failure(Exception("Username does not exist. Please sign up.")))
                             }
@@ -430,7 +436,7 @@ object ChatRepository {
                 auth.signInWithEmailAndPassword(email, passwordInput).addOnCompleteListener { authTask ->
                     if (authTask.isSuccessful) {
                         val uid = authTask.result.user?.uid ?: ""
-                        db.child("users").child(uid).get().addOnCompleteListener { userTask ->
+                        db.child("users").child(uid).get().withTimeout { userTask ->
                             if (userTask.isSuccessful) {
                                 val user = userTask.result.getValue(User::class.java)
                                 if (user != null) {
@@ -439,10 +445,10 @@ object ChatRepository {
                                     startObservingRealtimeData(uid)
                                     saveLocalState()
                                 } else {
-                                    onResult(Result.failure(Exception("User details not found.")))
+                                    onResult(Result.failure(Exception("User details not found in database.")))
                                 }
                             } else {
-                                onResult(Result.failure(userTask.exception ?: Exception("Error retrieving user info.")))
+                                onResult(Result.failure(userTask.exception ?: Exception("Error retrieving user info from database.")))
                             }
                         }
                     } else {
@@ -1024,6 +1030,32 @@ object ChatRepository {
 
     private fun triggerFriendRequestsUpdate(uid: String) {
         _friendRequests.value = mockFriendRequests.filter { it.toUid == uid && it.status == "pending" }
+    }
+
+    private fun <T> com.google.android.gms.tasks.Task<T>.withTimeout(
+        timeoutMillis: Long = 8000L,
+        errorMessage: String = "Firebase Database connection timed out. Please verify your Realtime Database URL and rules in App Settings.",
+        onComplete: (com.google.android.gms.tasks.Task<T>) -> Unit
+    ) {
+        var completed = false
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val timeoutRunnable = Runnable {
+            if (!completed) {
+                completed = true
+                val exception = java.util.concurrent.TimeoutException(errorMessage)
+                onComplete(com.google.android.gms.tasks.Tasks.forException(exception))
+            }
+        }
+        
+        handler.postDelayed(timeoutRunnable, timeoutMillis)
+        
+        this.addOnCompleteListener { task ->
+            handler.removeCallbacks(timeoutRunnable)
+            if (!completed) {
+                completed = true
+                onComplete(task)
+            }
+        }
     }
 
     private fun cleanupListeners() {

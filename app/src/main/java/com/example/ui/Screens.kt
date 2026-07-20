@@ -99,6 +99,7 @@ fun LoginScreen(viewModel: AppViewModel) {
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var showFirebaseConfig by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -418,6 +419,83 @@ fun LoginScreen(viewModel: AppViewModel) {
             dismissButton = {
                 TextButton(onClick = { showForgotPasswordDialog = false }) {
                     Text(text = "Cancel", color = Color.LightGray)
+                }
+            }
+        )
+    }
+
+    if (showFirebaseConfig) {
+        var dbUrlInput by remember { mutableStateOf(viewModel.getCustomDatabaseUrl()) }
+
+        AlertDialog(
+            onDismissRequest = { showFirebaseConfig = false },
+            containerColor = Color(0xFF1E293B),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Firebase Configuration",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Firebase RTDB Config", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "If your Firebase Realtime Database is in Europe, Asia, or has a custom suffix, enter its full URL below to prevent connections from hanging indefinitely.",
+                        color = Color.LightGray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    
+                    OutlinedTextField(
+                        value = dbUrlInput,
+                        onValueChange = { dbUrlInput = it },
+                        label = { Text("Realtime Database URL") },
+                        placeholder = { Text("https://your-project-id-default-rtdb.europe-west1.firebasedatabase.app") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("firebase_db_url_input")
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "Example URLs:\n• https://chatongame-383b6-default-rtdb.europe-west1.firebasedatabase.app\n• https://chatongame-383b6-default-rtdb.firebaseio.com",
+                        color = Color.Gray,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateDatabaseUrl(dbUrlInput)
+                        showFirebaseConfig = false
+                        Toast.makeText(context, "Database URL updated! Please restart the app or try logging in.", Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(text = "Save URL", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.updateDatabaseUrl("")
+                        showFirebaseConfig = false
+                        Toast.makeText(context, "Cleared custom URL. Defaulting to US standard.", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(text = "Clear / Default", color = Color.Red)
                 }
             }
         )
@@ -742,10 +820,19 @@ fun DashboardScreen(viewModel: AppViewModel) {
     var showAboutDialog by remember { mutableStateOf(false) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var hasOverlayPermission by remember { mutableStateOf(viewModel.checkOverlayPermission(context)) }
+    var isOverlayBannerDismissed by remember { mutableStateOf(false) }
 
-    // Synchronize permission checks when returning or focusing
-    LaunchedEffect(Unit) {
-        hasOverlayPermission = viewModel.checkOverlayPermission(context)
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = viewModel.checkOverlayPermission(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Scaffold(
@@ -926,7 +1013,7 @@ fun DashboardScreen(viewModel: AppViewModel) {
                 .padding(horizontal = 16.dp)
         ) {
             // Check & request System Alert Overlay permission banner
-            if (!hasOverlayPermission) {
+            if (!hasOverlayPermission && !isOverlayBannerDismissed) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -935,33 +1022,49 @@ fun DashboardScreen(viewModel: AppViewModel) {
                     border = CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(Color(0xFFEC4899), Color(0xFFEC4899)))),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = "Overlay Warning", tint = Color(0xFFEC4899))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Floating Chat Bubbles",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        IconButton(
+                            onClick = { isOverlayBannerDismissed = true },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss Banner",
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Enable overlay permission to chat inside games using floating chat bubbles without leaving your matches!",
-                            color = Color.LightGray,
-                            fontSize = 11.sp
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { viewModel.requestOverlayPermission(context) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEC4899)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.align(Alignment.End)
+
+                        Column(
+                            modifier = Modifier.padding(16.dp)
                         ) {
-                            Text("Grant Permission", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, contentDescription = "Overlay Warning", tint = Color(0xFFEC4899))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Floating Chat Bubbles",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Enable overlay permission to chat inside games using floating chat bubbles without leaving your matches!",
+                                color = Color.LightGray,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { viewModel.requestOverlayPermission(context) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEC4899)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Grant Permission", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
                         }
                     }
                 }
@@ -1101,12 +1204,6 @@ fun DashboardScreen(viewModel: AppViewModel) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val isEmailVerified = if (com.example.data.FirebaseManager.isFirebaseAvailable) {
-                        com.example.data.FirebaseManager.auth?.currentUser?.isEmailVerified == true
-                    } else {
-                        true
-                    }
-
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
@@ -1117,15 +1214,15 @@ fun DashboardScreen(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = if (isEmailVerified) Icons.Default.Security else Icons.Default.Warning,
-                                contentDescription = "Verification status",
-                                tint = if (isEmailVerified) Color(0xFF10B981) else Color(0xFFFBBF24),
+                                imageVector = Icons.Default.Email,
+                                contentDescription = "Account Email",
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
                                 Text(
-                                    text = if (isEmailVerified) "Email Verified" else "Email Unverified",
+                                    text = "Account Email",
                                     color = Color.White,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
@@ -1401,7 +1498,7 @@ fun ChatsTab(viewModel: AppViewModel, chats: List<Chat>, friends: List<User>) {
                     val otherUser = friends.find { it.uid == otherUid } ?: User(
                         uid = otherUid,
                         username = if (otherUid.startsWith("bot_")) {
-                            if (otherUid == "bot_apex") "ApexLegend" else if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
+                            if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
                         } else "Gamer Friend",
                         friendId = "",
                         isOnline = otherUid.startsWith("bot_") && otherUid != "bot_frag"
@@ -1565,7 +1662,7 @@ fun FriendsTab(viewModel: AppViewModel, friends: List<User>, searchQuery: String
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Your friends lobby is empty.\nType 'ApexLegend' or Friend ID 'FC-A7K92P' above to add a gaming companion instantly!",
+                        text = "Your friends lobby is empty.\nType 'SpeedRunner' or Friend ID 'FC-X4M81Q' above to add a gaming companion instantly!",
                         color = Color.Gray,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
@@ -1790,7 +1887,7 @@ fun ChatScreen(viewModel: AppViewModel) {
     val otherUser = friends.find { it.uid == otherUid } ?: User(
         uid = otherUid,
         username = if (otherUid.startsWith("bot_")) {
-            if (otherUid == "bot_apex") "ApexLegend" else if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
+            if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
         } else "Gamer Friend",
         friendId = "",
         isOnline = otherUid.startsWith("bot_") && otherUid != "bot_frag"

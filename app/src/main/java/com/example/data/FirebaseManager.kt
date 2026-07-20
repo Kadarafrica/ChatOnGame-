@@ -14,8 +14,15 @@ object FirebaseManager {
     var isFirebaseAvailable: Boolean = false
         private set
 
+    var customDatabaseUrl: String? = null
+        private set
+
     fun initialize(context: Context) {
         try {
+            // Load custom database URL from SharedPreferences
+            val prefs = context.getSharedPreferences("chatongame_local_prefs", Context.MODE_PRIVATE)
+            customDatabaseUrl = prefs.getString("custom_firebase_db_url", null)
+
             val resId = context.resources.getIdentifier("google_app_id", "string", context.packageName)
             val compiledAppId = if (resId != 0) context.getString(resId) else null
             
@@ -24,7 +31,7 @@ object FirebaseManager {
                     FirebaseApp.initializeApp(context)
                 }
                 isFirebaseAvailable = true
-                Log.d(TAG, "Firebase initialized successfully with google-services.json.")
+                Log.d(TAG, "Firebase initialized successfully. Custom DB URL: $customDatabaseUrl")
             } else {
                 isFirebaseAvailable = false
                 Log.w(TAG, "Firebase google_app_id not found. App running in robust local offline mode.")
@@ -37,12 +44,29 @@ object FirebaseManager {
         ChatRepository.initialize(context)
     }
 
+    fun updateDatabaseUrl(context: Context, url: String?) {
+        val prefs = context.getSharedPreferences("chatongame_local_prefs", Context.MODE_PRIVATE)
+        if (url.isNullOrEmpty()) {
+            prefs.edit().remove("custom_firebase_db_url").apply()
+            customDatabaseUrl = null
+        } else {
+            val cleanUrl = url.trim()
+            prefs.edit().putString("custom_firebase_db_url", cleanUrl).apply()
+            customDatabaseUrl = cleanUrl
+        }
+    }
+
     val auth: FirebaseAuth?
         get() = if (isFirebaseAvailable) FirebaseAuth.getInstance() else null
 
     val database: FirebaseDatabase?
         get() = if (isFirebaseAvailable) {
-            FirebaseDatabase.getInstance().apply {
+            val dbInstance = if (!customDatabaseUrl.isNullOrEmpty()) {
+                FirebaseDatabase.getInstance(customDatabaseUrl!!)
+            } else {
+                FirebaseDatabase.getInstance()
+            }
+            dbInstance.apply {
                 try {
                     setPersistenceEnabled(true)
                 } catch (e: Exception) {

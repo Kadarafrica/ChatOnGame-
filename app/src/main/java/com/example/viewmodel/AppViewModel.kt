@@ -77,6 +77,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = null
     }
 
+    fun getCustomDatabaseUrl(): String {
+        return FirebaseManager.customDatabaseUrl ?: ""
+    }
+
+    fun updateDatabaseUrl(url: String) {
+        val context = getApplication<Application>()
+        FirebaseManager.updateDatabaseUrl(context, url.ifBlank { null })
+    }
+
     fun signUp(email: String, username: String, passwordInput: String) {
         if (email.trim().isEmpty() || username.trim().isEmpty()) {
             _errorMessage.value = "Email and Username cannot be empty."
