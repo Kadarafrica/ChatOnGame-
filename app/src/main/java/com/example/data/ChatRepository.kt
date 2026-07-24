@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import com.example.utils.BadgeUtils
+import com.example.utils.NotificationHelper
 
 object ChatRepository {
     private const val TAG = "ChatRepository"
@@ -48,6 +50,29 @@ object ChatRepository {
     private var requestsListener: ValueEventListener? = null
     private var recentChatsListener: ValueEventListener? = null
     private var typingListener: ValueEventListener? = null
+    private val chatUnreadListeners = mutableMapOf<String, ValueEventListener>()
+
+    private fun updateRecentChats(chats: List<Chat>) {
+        val sorted = chats.sortedByDescending { it.lastMessageTimestamp }
+        _recentChats.value = sorted
+        val totalUnread = sorted.sumOf { it.unreadCount }
+        BadgeUtils.updateBadge(appContext, totalUnread)
+    }
+
+    fun refreshMockChats(uid: String) {
+        val updatedChats = mockChats.filter { it.participantUids.contains(uid) }.map { chat ->
+            val unread = mockMessages.count { it.chatId == chat.id && it.receiverId == uid && it.status != "read" }
+            val lastMsg = mockMessages.filter { it.chatId == chat.id }.maxByOrNull { it.timestamp }
+            val lastText = lastMsg?.text ?: chat.lastMessageText
+            val lastTime = lastMsg?.timestamp ?: chat.lastMessageTimestamp
+            chat.copy(
+                unreadCount = unread,
+                lastMessageText = lastText,
+                lastMessageTimestamp = lastTime
+            )
+        }
+        updateRecentChats(updatedChats)
+    }
 
     // Fallback Mock database for offline/demo operation
     private val mockUsers = mutableMapOf<String, User>()
@@ -57,28 +82,8 @@ object ChatRepository {
     private val mockChats = mutableListOf<Chat>()
     private val mockMessages = mutableListOf<Message>()
 
-    // Preset Gaming Bot Profiles for falling back gracefully when Firebase is offline
-    private val gameBots = listOf(
-        User("bot_speed", "SpeedRunner", "speed@chatongame.com", "FC-X4M81Q", true, System.currentTimeMillis(), null, null),
-        User("bot_frag", "FragMaster", "frag@chatongame.com", "FC-B9R3LT", false, System.currentTimeMillis() - 120000, null, null)
-    )
-
-    private val gameBotReplies = listOf(
-        "Yo! Let's party up in Valorant. Are you ready?",
-        "Wait, almost finished with this speedrun! New record incoming! ⏱️",
-        "GG! That clutch was absolute legendary.",
-        "Add me in your squad, we're streaming on Twitch tonight 🎮",
-        "My ping is kind of high right now, but I can still carry!",
-        "Who's down for some CS2 or Apex? Hit me up!",
-        "Check out my new gaming setup! I'll send a photo later.",
-        "That boss fight was pure pain, took me 15 attempts..."
-    )
-
     init {
-        // Pre-populate mock database with game bots
-        for (bot in gameBots) {
-            mockUsers[bot.uid] = bot
-        }
+        // Init mock database
     }
 
     private var appContext: Context? = null
@@ -92,6 +97,24 @@ object ChatRepository {
     fun initialize(context: Context) {
         appContext = context.applicationContext
         loadLocalState()
+        
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            if (cm != null) {
+                val request = android.net.NetworkRequest.Builder().build()
+                cm.registerNetworkCallback(request, object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) {
+                        updatePresence(true)
+                    }
+
+                    override fun onLost(network: android.net.Network) {
+                        updatePresence(false)
+                    }
+                })
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Network callback setup failed: ${e.message}")
+        }
     }
 
     fun saveLocalState() {
@@ -161,12 +184,10 @@ object ChatRepository {
                 val list = usersAdapter.fromJson(usersJson)
                 if (list != null) {
                     mockUsers.clear()
-                    // Re-add bots first
-                    for (bot in gameBots) {
-                        mockUsers[bot.uid] = bot
-                    }
                     for (user in list) {
-                        mockUsers[user.uid] = user
+                        if (!user.uid.startsWith("bot_")) {
+                            mockUsers[user.uid] = user
+                        }
                     }
                 }
             }
@@ -180,7 +201,7 @@ object ChatRepository {
                 if (map != null) {
                     mockFriends.clear()
                     for ((k, v) in map) {
-                        mockFriends[k] = v.toMutableSet()
+                        mockFriends[k] = v.filter { !it.startsWith("bot_") }.toMutableSet()
                     }
                 }
             }
@@ -193,7 +214,7 @@ object ChatRepository {
                 val list = requestsAdapter.fromJson(requestsJson)
                 if (list != null) {
                     mockFriendRequests.clear()
-                    mockFriendRequests.addAll(list)
+                    mockFriendRequests.addAll(list.filter { !it.fromUid.startsWith("bot_") && !it.toUid.startsWith("bot_") })
                 }
             }
 
@@ -205,7 +226,7 @@ object ChatRepository {
                 val list = chatsAdapter.fromJson(chatsJson)
                 if (list != null) {
                     mockChats.clear()
-                    mockChats.addAll(list)
+                    mockChats.addAll(list.filter { chat -> chat.participantUids.none { it.startsWith("bot_") } })
                 }
             }
 
@@ -217,7 +238,7 @@ object ChatRepository {
                 val list = messagesAdapter.fromJson(messagesJson)
                 if (list != null) {
                     mockMessages.clear()
-                    mockMessages.addAll(list)
+                    mockMessages.addAll(list.filter { !it.senderId.startsWith("bot_") && !it.chatId.contains("bot_") })
                 }
             }
 
@@ -554,6 +575,31 @@ object ChatRepository {
         }
     }
 
+    fun updateAvatarUrl(newAvatarUrl: String, onResult: (Result<Unit>) -> Unit) {
+        val user = _currentUser.value ?: return
+        if (FirebaseManager.isFirebaseAvailable) {
+            val db = FirebaseManager.database?.reference ?: return
+            db.child("users").child(user.uid).child("avatarUrl").setValue(newAvatarUrl)
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        val updatedUser = user.copy(avatarUrl = newAvatarUrl)
+                        _currentUser.value = updatedUser
+                        mockUsers[user.uid] = updatedUser
+                        saveLocalState()
+                        onResult(Result.success(Unit))
+                    } else {
+                        onResult(Result.failure(task.exception ?: Exception("Failed to update avatar.")))
+                    }
+                }
+        } else {
+            val updatedUser = user.copy(avatarUrl = newAvatarUrl)
+            _currentUser.value = updatedUser
+            mockUsers[user.uid] = updatedUser
+            saveLocalState()
+            onResult(Result.success(Unit))
+        }
+    }
+
     // Friend requests logic
     fun sendFriendRequest(query: String, onResult: (Result<Unit>) -> Unit) {
         val user = _currentUser.value ?: return
@@ -603,8 +649,7 @@ object ChatRepository {
             }
         } else {
             // Mock Friend System
-            val targetBot = gameBots.find { it.username.equals(searchQuery, ignoreCase = true) || it.friendId.equals(searchQuery, ignoreCase = true) }
-            val targetUser = targetBot ?: mockUsers.values.find { (it.username.equals(searchQuery, ignoreCase = true) || it.friendId.equals(searchQuery, ignoreCase = true)) && it.uid != user.uid }
+            val targetUser = mockUsers.values.find { (it.username.equals(searchQuery, ignoreCase = true) || it.friendId.equals(searchQuery, ignoreCase = true)) && it.uid != user.uid }
 
             if (targetUser != null) {
                 // Check if already friends
@@ -714,6 +759,19 @@ object ChatRepository {
     }
 
     // Chat operations
+    fun clearUnreadCount(chatId: String) {
+        val user = _currentUser.value ?: return
+        markMessagesAsRead(chatId)
+        val index = mockChats.indexOfFirst { it.id == chatId }
+        if (index != -1) {
+            mockChats[index] = mockChats[index].copy(unreadCount = 0)
+        }
+        if (!FirebaseManager.isFirebaseAvailable) {
+            refreshMockChats(user.uid)
+        }
+        saveLocalState()
+    }
+
     fun startChatWith(friendUid: String): String {
         val user = _currentUser.value ?: return ""
         // Unique Chat ID is sorted participant IDs joined
@@ -731,13 +789,15 @@ object ChatRepository {
             }
         } else {
             // Local Mock Chats
-            val exists = mockChats.any { it.id == chatId }
-            if (!exists) {
+            val index = mockChats.indexOfFirst { it.id == chatId }
+            if (index == -1) {
                 val newChat = Chat(chatId, sortedUids, "No messages yet", System.currentTimeMillis(), 0)
                 mockChats.add(newChat)
-                _recentChats.value = mockChats.toList()
-                saveLocalState()
+            } else {
+                mockChats[index] = mockChats[index].copy(unreadCount = 0)
             }
+            refreshMockChats(user.uid)
+            saveLocalState()
         }
         return chatId
     }
@@ -771,52 +831,13 @@ object ChatRepository {
             } else {
                 mockChats.add(Chat(chatId, listOf(user.uid, targetUid), text, System.currentTimeMillis(), 0))
             }
-            _recentChats.value = mockChats.toList().sortedByDescending { it.lastMessageTimestamp }
+            refreshMockChats(user.uid)
             saveLocalState()
-
-            // Simulate Game Bot Automated Reply If receiver is a bot
-            if (targetUid.startsWith("bot_")) {
-                simulateBotReply(chatId, targetUid)
-            }
         }
     }
 
     private fun simulateBotReply(chatId: String, botUid: String) {
-        val handler = Handler(Looper.getMainLooper())
-        
-        // 1. Deliver Message immediately
-        handler.postDelayed({
-            updateMockMessageStatus(chatId, "delivered")
-        }, 600)
-
-        // 2. Read status + Bot starts Typing after 1.2s
-        handler.postDelayed({
-            updateMockMessageStatus(chatId, "read")
-            _typingState.value = _typingState.value + (botUid to chatId)
-        }, 1200)
-
-        // 3. Bot sends message and stops typing after 3s
-        handler.postDelayed({
-            _typingState.value = _typingState.value - botUid
-            
-            val randomReply = gameBotReplies[java.util.Random().nextInt(gameBotReplies.size)]
-            val replyId = "msg_" + UUID.randomUUID().toString().take(12)
-            val botReply = Message(replyId, chatId, botUid, _currentUser.value?.uid ?: "", randomReply, System.currentTimeMillis(), "read")
-            
-            mockMessages.add(botReply)
-            _activeChatMessages.value = mockMessages.filter { it.chatId == chatId }.sortedBy { it.timestamp }
-
-            // Update recent chat listing
-            val chatIndex = mockChats.indexOfFirst { it.id == chatId }
-            if (chatIndex != -1) {
-                mockChats[chatIndex] = mockChats[chatIndex].copy(
-                    lastMessageText = randomReply,
-                    lastMessageTimestamp = System.currentTimeMillis()
-                )
-            }
-            _recentChats.value = mockChats.toList().sortedByDescending { it.lastMessageTimestamp }
-            saveLocalState()
-        }, 3200)
+        // No bot replies
     }
 
     private fun updateMockMessageStatus(chatId: String, newStatus: String) {
@@ -912,12 +933,16 @@ object ChatRepository {
 
     fun updatePresence(isOnline: Boolean) {
         val user = _currentUser.value ?: return
+        val updatedUser = user.copy(isOnline = isOnline, lastSeen = System.currentTimeMillis())
+        _currentUser.value = updatedUser
         if (FirebaseManager.isFirebaseAvailable) {
             val db = FirebaseManager.database?.reference ?: return
             db.child("users").child(user.uid).child("isOnline").setValue(isOnline)
             db.child("users").child(user.uid).child("lastSeen").setValue(System.currentTimeMillis())
         } else {
-            mockUsers[user.uid] = user.copy(isOnline = isOnline, lastSeen = System.currentTimeMillis())
+            mockUsers[user.uid] = updatedUser
+            triggerFriendsUpdate(user.uid)
+            saveLocalState()
         }
     }
 
@@ -973,7 +998,7 @@ object ChatRepository {
         }
         db.child("friendRequests").child(uid).addValueEventListener(requestsListener!!)
 
-        // 3. Observe Recent Chats listing
+        // 3. Observe Recent Chats listing & dynamic unread counts
         recentChatsListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val chatsList = mutableListOf<Chat>()
@@ -983,7 +1008,73 @@ object ChatRepository {
                         chatsList.add(chat)
                     }
                 }
-                _recentChats.value = chatsList.sortedByDescending { it.lastMessageTimestamp }
+
+                if (chatsList.isEmpty()) {
+                    updateRecentChats(emptyList())
+                    return
+                }
+
+                // Cleanup unread listeners for removed chats
+                val currentChatIds = chatsList.map { it.id }.toSet()
+                val toRemove = chatUnreadListeners.keys.filter { it !in currentChatIds }
+                toRemove.forEach { chatId ->
+                    chatUnreadListeners[chatId]?.let { listener ->
+                        db.child("messages").child(chatId).removeEventListener(listener)
+                    }
+                    chatUnreadListeners.remove(chatId)
+                }
+
+                val chatsMap = chatsList.associateBy { it.id }.toMutableMap()
+
+                for (chat in chatsList) {
+                    if (!chatUnreadListeners.containsKey(chat.id)) {
+                        val listener = object : ValueEventListener {
+                            private val notifiedMsgIds = mutableSetOf<String>()
+
+                            override fun onDataChange(msgSnapshot: DataSnapshot) {
+                                var unread = 0
+                                var maxTimestamp = 0L
+                                var latestText = ""
+                                for (msgNode in msgSnapshot.children) {
+                                    val msg = msgNode.getValue(Message::class.java)
+                                    if (msg != null) {
+                                        if (msg.timestamp > maxTimestamp) {
+                                            maxTimestamp = msg.timestamp
+                                            latestText = msg.text
+                                        }
+                                        if (msg.receiverId == uid && msg.status != "read") {
+                                            unread++
+                                            val msgKey = msgNode.key ?: msg.id
+                                            if (notifiedMsgIds.add(msgKey)) {
+                                                val senderName = mockUsers[msg.senderId]?.username ?: "ChatOnGame"
+                                                NotificationHelper.showMessageNotification(
+                                                    appContext,
+                                                    senderName,
+                                                    msg.text,
+                                                    chat.id
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                val existing = chatsMap[chat.id] ?: chat
+                                val finalTime = if (maxTimestamp > 0L) maxOf(existing.lastMessageTimestamp, maxTimestamp) else existing.lastMessageTimestamp
+                                val finalText = if (maxTimestamp > 0L && latestText.isNotEmpty()) latestText else existing.lastMessageText
+                                chatsMap[chat.id] = existing.copy(
+                                    unreadCount = unread,
+                                    lastMessageTimestamp = finalTime,
+                                    lastMessageText = finalText
+                                )
+                                updateRecentChats(chatsMap.values.toList())
+                            }
+
+                            override fun onCancelled(error: DatabaseError) {}
+                        }
+                        chatUnreadListeners[chat.id] = listener
+                        db.child("messages").child(chat.id).addValueEventListener(listener)
+                    }
+                }
+                updateRecentChats(chatsMap.values.toList())
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -1019,7 +1110,7 @@ object ChatRepository {
         // Initialize mock values
         triggerFriendsUpdate(uid)
         triggerFriendRequestsUpdate(uid)
-        _recentChats.value = mockChats.filter { it.participantUids.contains(uid) }.sortedByDescending { it.lastMessageTimestamp }
+        refreshMockChats(uid)
     }
 
     private fun triggerFriendsUpdate(uid: String) {
@@ -1064,6 +1155,10 @@ object ChatRepository {
         requestsListener?.let { db.child("friendRequests").removeEventListener(it) }
         recentChatsListener?.let { db.child("chats").removeEventListener(it) }
         typingListener?.let { db.child("typing").removeEventListener(it) }
+        chatUnreadListeners.forEach { (chatId, listener) ->
+            db.child("messages").child(chatId).removeEventListener(listener)
+        }
+        chatUnreadListeners.clear()
         cleanupMessagesListener()
 
         friendsListener = null

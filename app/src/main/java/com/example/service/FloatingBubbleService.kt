@@ -11,6 +11,8 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -21,7 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.*
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -93,6 +95,9 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     private var screenHeight = 1920
     private var closeLayout: FrameLayout? = null
     private var isOverCloseZoneState = mutableStateOf(false)
+    private var isExpandedState = mutableStateOf(false)
+    private var bubbleXState = mutableStateOf(0)
+    private var bubbleYState = mutableStateOf(0)
 
     private var lastX = 0
     private var lastY = 0
@@ -100,6 +105,11 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
     override fun onCreate() {
         super.onCreate()
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
+        ChatRepository.updatePresence(true)
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
@@ -119,6 +129,11 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        ChatRepository.updatePresence(true)
         activeChatId = intent?.getStringExtra(EXTRA_CHAT_ID) ?: activeChatId
 
         if (activeChatId == null) {
@@ -127,8 +142,8 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             if (recent != null) {
                 activeChatId = recent.id
             } else {
-                // If no chats exist, default to the first bot
-                activeChatId = ChatRepository.startChatWith("bot_speed")
+                // If no chats exist, default to the first chat
+                activeChatId = ChatRepository.recentChats.value.firstOrNull()?.id
             }
         }
 
@@ -139,15 +154,18 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
         return START_NOT_STICKY
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun setupFloatingBubble() {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
         bubbleLayout = FrameLayout(this).apply {
-            // Bind lifecycle owners to the root container layout as well
             setViewTreeLifecycleOwner(this@FloatingBubbleService)
             setViewTreeSavedStateRegistryOwner(this@FloatingBubbleService)
             setViewTreeViewModelStoreOwner(this@FloatingBubbleService)
         }
         
-        // Window parameters
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -168,9 +186,10 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
 
-        // Create ComposeView inside service container
+        bubbleXState.value = bubbleParams.x
+        bubbleYState.value = bubbleParams.y
+
         val composeView = ComposeView(this).apply {
-            // Bind lifecycle owners for proper Jetpack Compose support
             setViewTreeLifecycleOwner(this@FloatingBubbleService)
             setViewTreeSavedStateRegistryOwner(this@FloatingBubbleService)
             setViewTreeViewModelStoreOwner(this@FloatingBubbleService)
@@ -180,53 +199,245 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             }
         }
 
-        bubbleLayout.addView(composeView)
-        windowManager.addView(bubbleLayout, bubbleParams)
+        val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        var isDragging = false
+
+        composeView.setOnTouchListener { _, event ->
+            if (isExpandedState.value) {
+                return@setOnTouchListener false
+            }
+
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = bubbleParams.x
+                    initialY = bubbleParams.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    isDragging = false
+                    showCloseZone()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    if (!isDragging && Math.hypot(dx.toDouble(), dy.toDouble()) > touchSlop) {
+                        isDragging = true
+                    }
+                    if (isDragging) {
+                        bubbleParams.x = (initialX + dx).toInt().coerceIn(0, screenWidth - 180)
+                        bubbleParams.y = (initialY + dy).toInt().coerceIn(100, screenHeight - 200)
+                        windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                        bubbleXState.value = bubbleParams.x
+                        bubbleYState.value = bubbleParams.y
+
+                        val closeCenterX = screenWidth / 2
+                        val closeCenterY = screenHeight - 200
+                        val bubbleCenterX = bubbleParams.x + 90
+                        val bubbleCenterY = bubbleParams.y + 90
+                        val dist = Math.hypot((bubbleCenterX - closeCenterX).toDouble(), (bubbleCenterY - closeCenterY).toDouble())
+                        val isTouchInBottomCloseArea = event.rawY > (screenHeight - 450) && Math.abs(event.rawX - closeCenterX) < 320
+                        isOverCloseZoneState.value = dist < 320 || isTouchInBottomCloseArea
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val closeCenterX = screenWidth / 2
+                    val isTouchInBottomClose = event.rawY > (screenHeight - 420) && Math.abs(event.rawX - closeCenterX) < 320
+                    val shouldClose = isOverCloseZoneState.value || isTouchInBottomClose
+                    hideCloseZone()
+                    if (isDragging) {
+                        if (shouldClose) {
+                            stopSelf()
+                        } else {
+                            val targetX = if (bubbleParams.x < screenWidth / 2) 0 else screenWidth - 180
+                            bubbleParams.x = targetX
+                            windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                            bubbleXState.value = targetX
+                        }
+                    } else {
+                        isExpandedState.value = true
+                        isExpanded = true
+                        bubbleParams.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                        val density = resources.displayMetrics.density
+                        bubbleParams.width = (340 * density).toInt()
+                        bubbleParams.height = (310 * density).toInt()
+                        windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        try {
+            bubbleLayout.addView(composeView)
+            windowManager.addView(bubbleLayout, bubbleParams)
+        } catch (e: Exception) {
+            Log.e("FloatingBubbleService", "Error adding overlay view: ${e.message}")
+            stopSelf()
+        }
     }
 
+    fun splitMessageAndEmoji(message: String): Pair<String, String> {
+        var textIndex = message.length
+        for (i in message.indices.reversed()) {
+            val char = message[i]
+            if (char.isSurrogate() || char.code > 127) {
+                textIndex = i
+            } else {
+                if (textIndex < message.length) {
+                    break
+                }
+            }
+        }
+        val text = message.substring(0, textIndex).trim()
+        val emoji = message.substring(textIndex).trim()
+        return if (emoji.isNotEmpty()) Pair(text, emoji) else Pair(message, "")
+    }
+
+    @Composable
+    fun AnimatedEmojiText(emoji: String) {
+        val infiniteTransition = rememberInfiniteTransition(label = "emoji_anim")
+        val scale by infiniteTransition.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.25f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "scale"
+        )
+        val rotation by infiniteTransition.animateFloat(
+            initialValue = -5f,
+            targetValue = 5f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(300, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "rotation"
+        )
+
+        Text(
+            text = emoji,
+            fontSize = 12.sp,
+            modifier = Modifier.graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                rotationZ = rotation
+            )
+        )
+    }
+
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
     @Composable
     fun BubbleOverlay() {
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
-        var expanded by remember { mutableStateOf(false) }
-        var currentX by remember { mutableStateOf(bubbleParams.x) }
-        var currentY by remember { mutableStateOf(bubbleParams.y) }
+        var expanded by isExpandedState
+        var currentX by bubbleXState
+        var currentY by bubbleYState
         var selectedCategory by remember { mutableStateOf("Football") }
 
         val activeChat = activeChatId ?: ""
         val friends by ChatRepository.friends.collectAsState()
         val currentUser by ChatRepository.currentUser.collectAsState()
+        val recentChats by ChatRepository.recentChats.collectAsState()
+
+        val messages by ChatRepository.activeChatMessages.collectAsState()
+        var lastProcessedMsgId by remember { mutableStateOf<String?>(messages.lastOrNull()?.id) }
+        var popupMessage by remember { mutableStateOf<com.example.data.Message?>(null) }
+        var popupJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+        val coroutineScope = rememberCoroutineScope()
+
+        val isImeVisible = WindowInsets.isImeVisible
+        LaunchedEffect(isImeVisible, expanded) {
+            if (expanded) {
+                val density = resources.displayMetrics.density
+                if (isImeVisible) {
+                    bubbleParams.y = (40 * density).toInt()
+                } else {
+                    bubbleParams.y = currentY
+                }
+                try {
+                    windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        LaunchedEffect(activeChat, expanded) {
+            if (activeChat.isNotEmpty()) {
+                ChatRepository.observeChatMessages(activeChat)
+                if (expanded) {
+                    ChatRepository.clearUnreadCount(activeChat)
+                    popupMessage = null
+                }
+            }
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                ChatRepository.cleanupMessagesListener()
+            }
+        }
+
+        LaunchedEffect(messages) {
+            val lastMsg = messages.lastOrNull()
+            if (lastMsg != null && lastMsg.id != lastProcessedMsgId) {
+                lastProcessedMsgId = lastMsg.id
+                if (lastMsg.senderId != currentUser?.uid && !expanded) {
+                    popupMessage = lastMsg
+                    popupJob?.cancel()
+                    popupJob = coroutineScope.launch {
+                        kotlinx.coroutines.delay(6500) // Auto collapse popup after 6.5 seconds for easy reading
+                        popupMessage = null
+                    }
+                }
+            }
+        }
 
         val recipient = remember(activeChat, friends) {
             val otherUid = activeChat.replace("chat_", "").split("_").firstOrNull { it != currentUser?.uid }
-            friends.find { it.uid == otherUid } ?: User("bot_speed", "SpeedRunner", "speed@chatongame.com", "FC-X4M81Q", true)
+            friends.find { it.uid == otherUid } ?: User(otherUid ?: "", "Gamer", "", "", false)
         }
 
         val footballMessages = listOf(
-            "Play fast! ⚡",
-            "Gooooool! ⚽",
-            "Come down! 😂",
-            "Nice play! 👍",
-            "Defend! 🛡️",
-            "Pass the ball! 🎯",
-            "Lucky win! 😉",
-            "Unlucky! 💔"
+            "GOAL! 🔥⚽🔥",
+            "Defend now! 🛡️🏃‍♂️",
+            "Pass! 🎯⚽",
+            "Lagging! 📶😭",
+            "What a save! 🧤🤩",
+            "We got this! 💪🏆",
+            "GG WP! 🤝😎",
+            "Red card?! 🟥😳"
         )
 
         val chessMessages = listOf(
-            "CHECKMATE! 👑",
-            "Mate! ♟️",
-            "Nice move! 💡",
-            "Good game! 🤝",
-            "Hurry up! ⏱️",
-            "Draw? 🤝"
+            "Checkmate! 👑💀",
+            "GG WP! 🤝🔥",
+            "Brilliant Move! 💡♟️",
+            "Hurry! ⏱️🚨",
+            "I blundered... 🤦‍♂️",
+            "Nice game! 👍✨",
+            "Draw? 🤝🏁",
+            "Calculated! 🧠⚡"
         )
 
         val generalMessages = listOf(
-            "Hello! 👋",
-            "Playing now! 🎮",
-            "Hold on... ⏳",
-            "GG! 🏆"
+            "Rush B! 🏃‍♂️💣🔥",
+            "Lagging so hard! 📶🤬",
+            "Enemy spotted! 👁️🔫",
+            "Need Backup! 🚨🤝",
+            "GG Ez! 😎🏆",
+            "On my way! 🚀🎮",
+            "AFK for 1 min ⏳🍔",
+            "Nice shot! 🎯🔥"
         )
 
         val messagesList = when (selectedCategory) {
@@ -237,79 +448,99 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
         Box(modifier = Modifier.wrapContentSize()) {
             if (!expanded) {
-                // Circular Floating Bubble
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF1E293B)) // Slate 800 dark theme base
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = {
-                                    showCloseZone()
-                                },
-                                onDragEnd = {
-                                    if (isOverCloseZoneState.value) {
-                                        stopSelf()
-                                    } else {
-                                        // Snap to nearest screen edge horizontally
-                                        val targetX = if (bubbleParams.x < screenWidth / 2) 0 else screenWidth - 180
-                                        bubbleParams.x = targetX
-                                        windowManager.updateViewLayout(bubbleLayout, bubbleParams)
-                                        currentX = targetX
-                                    }
-                                    hideCloseZone()
-                                },
-                                onDragCancel = {
-                                    hideCloseZone()
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    bubbleParams.x = (bubbleParams.x + dragAmount.x.toInt()).coerceIn(0, screenWidth - 180)
-                                    bubbleParams.y = (bubbleParams.y + dragAmount.y.toInt()).coerceIn(100, screenHeight - 300)
-                                    windowManager.updateViewLayout(bubbleLayout, bubbleParams)
-                                    currentX = bubbleParams.x
-                                    currentY = bubbleParams.y
-                                    
-                                    // Check if over close zone (bottom center)
-                                    val bubbleCenterX = bubbleParams.x + 90
-                                    val bubbleCenterY = bubbleParams.y + 90
-                                    val closeCenterX = screenWidth / 2
-                                    val closeCenterY = screenHeight - 250
-                                    val dist = Math.hypot((bubbleCenterX - closeCenterX).toDouble(), (bubbleCenterY - closeCenterY).toDouble())
-                                    isOverCloseZoneState.value = dist < 220
-                                }
-                            )
-                        }
-                        .clickable {
-                            expanded = true
-                            isExpanded = true
-                            // Reconfigure window params to allow focus/keyboard typing inside the overlay!
-                            bubbleParams.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                            bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-                            val density = resources.displayMetrics.density
-                            bubbleParams.width = (330 * density).toInt()
-                            bubbleParams.height = (250 * density).toInt()
-                            windowManager.updateViewLayout(bubbleLayout, bubbleParams)
-                        },
-                    contentAlignment = Alignment.Center
+                val isLeft = currentX < screenWidth / 2
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (isLeft) Arrangement.Start else Arrangement.End,
+                    modifier = Modifier.wrapContentSize()
                 ) {
-                    // Gaming theme icon inside the bubble
-                    Icon(
-                        imageVector = Icons.Default.SportsEsports,
-                        contentDescription = "ChatOnGame",
-                        tint = Color(0xFF10B981), // Neon gaming green
-                        modifier = Modifier.size(32.dp)
-                    )
-                    
-                    // Small unread indicator badge
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-4).dp, y = 4.dp)
-                            .background(Color.Red, CircleShape)
-                    )
+                    val bubbleCircle = @Composable {
+                        Box(
+                            modifier = Modifier
+                                .wrapContentSize()
+                                .padding(6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Main Circle Avatar / Logo
+                            Box(
+                                modifier = Modifier
+                                    .size(58.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1E293B))
+                                    .border(2.5.dp, Color(0xFF10B981), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.chat_logo_1784623266173),
+                                    contentDescription = "ChatOnGame Logo",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            }
+                            
+                            // Dynamic unread indicator badge counter on TOP of the main circle
+                            val totalUnread = recentChats.sumOf { it.unreadCount }
+                            if (totalUnread > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 2.dp, y = (-2).dp)
+                                        .background(Color(0xFFEF4444), CircleShape)
+                                        .border(2.dp, Color.White, CircleShape)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (totalUnread > 99) "99+" else "$totalUnread",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    val speechBubble = @Composable {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = popupMessage != null,
+                            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+                            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color(0xFF3B82F6)) // Royal Blue message bubble
+                                    .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(18.dp))
+                                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                                    .widthIn(min = 100.dp, max = 220.dp)
+                            ) {
+                                Text(
+                                    text = popupMessage?.text ?: "",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    lineHeight = 16.sp,
+                                    maxLines = 3,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    if (isLeft) {
+                        bubbleCircle()
+                        Spacer(modifier = Modifier.width(8.dp))
+                        speechBubble()
+                    } else {
+                        speechBubble()
+                        Spacer(modifier = Modifier.width(8.dp))
+                        bubbleCircle()
+                    }
                 }
             } else {
                 // Expanded Overlay Chat Card
@@ -407,6 +638,7 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 pair.forEach { text ->
+                                    val (msgText, emoji) = remember(text) { splitMessageAndEmoji(text) }
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
@@ -430,13 +662,24 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                                             .padding(horizontal = 6.dp, vertical = 8.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(
-                                            text = text,
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = msgText,
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            if (emoji.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                AnimatedEmojiText(emoji = emoji)
+                                            }
+                                        }
                                     }
                                 }
                                 if (pair.size == 1) {
@@ -469,6 +712,25 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
                                 onValueChange = { replyText = it },
                                 textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
                                 cursorBrush = SolidColor(Color.White),
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
+                                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                    onSend = {
+                                        if (replyText.trim().isNotEmpty()) {
+                                            ChatRepository.sendMessage(activeChat, replyText.trim())
+                                            replyText = ""
+                                            focusManager.clearFocus()
+                                            keyboardController?.hide()
+                                            expanded = false
+                                            isExpanded = false
+                                            bubbleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                            bubbleParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                                            bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                            bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                            windowManager.updateViewLayout(bubbleLayout, bubbleParams)
+                                            Toast.makeText(this@FloatingBubbleService, "Message sent!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                ),
                                 modifier = Modifier.fillMaxWidth()
                              )
                         }
@@ -638,6 +900,7 @@ class FloatingBubbleService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     }
 
     override fun onDestroy() {
+        ChatRepository.updatePresence(false)
         hideCloseZone()
         if (this::bubbleLayout.isInitialized) {
             try {

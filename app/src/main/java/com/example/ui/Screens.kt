@@ -3,9 +3,13 @@ package com.example.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,6 +44,7 @@ import com.example.data.Chat
 import com.example.data.FriendRequest
 import com.example.data.Message
 import com.example.data.User
+import com.example.ui.components.UserAvatar
 import com.example.viewmodel.AppScreen
 import com.example.viewmodel.AppViewModel
 import java.text.SimpleDateFormat
@@ -126,11 +132,14 @@ fun LoginScreen(viewModel: AppViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Game logo indicator
-                Icon(
-                    imageVector = Icons.Default.SportsEsports,
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.chat_logo_1784623266173),
                     contentDescription = "App Logo",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(72.dp)
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -674,11 +683,14 @@ fun SignUpScreen(viewModel: AppViewModel) {
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = Icons.Default.SportsEsports,
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.chat_logo_1784623266173),
                     contentDescription = "App Logo",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(72.dp)
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -850,11 +862,14 @@ fun DashboardScreen(viewModel: AppViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.SportsEsports,
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.chat_logo_1784623266173),
                             contentDescription = "App Logo",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -894,14 +909,24 @@ fun DashboardScreen(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = user.username,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp
-                                    )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                UserAvatar(
+                                    avatarUrl = user.avatarUrl,
+                                    username = user.username,
+                                    size = 46.dp,
+                                    showOnlineStatus = true,
+                                    isOnline = true,
+                                    modifier = Modifier.clickable { showSettingsDialog = true }
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = user.username,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp
+                                        )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Icon(
                                         imageVector = Icons.Default.Edit,
@@ -918,7 +943,7 @@ fun DashboardScreen(viewModel: AppViewModel) {
                                         text = "Friend ID: ${user.friendId}",
                                         color = Color(0xFF10B981),
                                         fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp
+                                        fontSize = 12.sp
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Icon(
@@ -936,17 +961,22 @@ fun DashboardScreen(viewModel: AppViewModel) {
                                     )
                                 }
                             }
+                        }
 
-                            // Dynamic Status Indicator
+                        // Dynamic Status Indicator
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF10B981))
+                                        .background(if (user.isOnline) Color(0xFF10B981) else Color.Gray)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Online", color = Color.Gray, fontSize = 11.sp)
+                                Text(
+                                    text = if (user.isOnline) "Online" else "Offline",
+                                    color = if (user.isOnline) Color(0xFF10B981) else Color.Gray,
+                                    fontSize = 11.sp
+                                )
                             }
                         }
                     }
@@ -958,10 +988,25 @@ fun DashboardScreen(viewModel: AppViewModel) {
                 containerColor = Color(0xFF0F172A),
                 tonalElevation = 4.dp
             ) {
+                val totalUnread = recentChats.sumOf { it.unreadCount }
                 NavigationBarItem(
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
+                    icon = {
+                        Box {
+                            Icon(Icons.Default.Chat, contentDescription = "Chats")
+                            if (totalUnread > 0) {
+                                Badge(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 6.dp, y = (-4).dp),
+                                    containerColor = Color(0xFF10B981)
+                                ) {
+                                    Text(if (totalUnread > 99) "99+" else "$totalUnread", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    },
                     label = { Text("Chats") },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -1149,6 +1194,183 @@ fun DashboardScreen(viewModel: AppViewModel) {
                         .padding(vertical = 8.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
+                    // Profile Picture / Avatar Section
+                    Text(
+                        text = "PROFILE PICTURE / AVATAR",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val imagePickerLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.GetContent()
+                    ) { uri: Uri? ->
+                        uri?.let {
+                            viewModel.updateAvatarUrl(it.toString()) { success, errorMsg ->
+                                if (success) {
+                                    Toast.makeText(context, "Profile picture updated from device!", Toast.LENGTH_SHORT).show()
+                                } else if (errorMsg != null) {
+                                    Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                UserAvatar(
+                                    avatarUrl = currentUser?.avatarUrl,
+                                    username = currentUser?.username ?: "",
+                                    size = 56.dp
+                                )
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = currentUser?.username ?: "User",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = "Custom photo or ready gaming avatar",
+                                        color = Color.Gray,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Upload button from device
+                            OutlinedButton(
+                                onClick = { imagePickerLauncher.launch("image/*") },
+                                border = BorderStroke(1.dp, Color(0xFF10B981)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.PhotoLibrary,
+                                        contentDescription = "Upload Photo",
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Upload Photo from Device", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Ready Avatars Category: Football Players
+                            Text(
+                                text = "FOOTBALL PLAYER AVATARS:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            val footballAvatars = remember {
+                                listOf(
+                                    Triple("Pro Striker", "res:football_star", Color(0xFF10B981)),
+                                    Triple("Lionel Messi", "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=300&q=80", Color(0xFF3B82F6)),
+                                    Triple("Cristiano Ronaldo", "https://images.unsplash.com/photo-1518091043644-c1d4457512c6?auto=format&fit=crop&w=300&q=80", Color(0xFFEF4444)),
+                                    Triple("Kylian Mbappé", "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=300&q=80", Color(0xFF8B5CF6)),
+                                    Triple("Neymar Jr", "https://images.unsplash.com/photo-1560272564-669525549217?auto=format&fit=crop&w=300&q=80", Color(0xFFF59E0B))
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                footballAvatars.forEach { (name, url, _) ->
+                                    val isSelected = currentUser?.avatarUrl == url
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .border(
+                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                color = if (isSelected) Color(0xFF10B981) else Color(0xFF334155),
+                                                shape = CircleShape
+                                            )
+                                            .clickable {
+                                                viewModel.updateAvatarUrl(url)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        UserAvatar(avatarUrl = url, username = name, size = 44.dp)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Ready Avatars Category: Chess Pieces
+                            Text(
+                                text = "CHESS PIECE AVATARS:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            val chessAvatars = remember {
+                                listOf(
+                                    Triple("Chess King ♔", "res:chess_king", Color(0xFFF59E0B)),
+                                    Triple("Chess Queen ♕", "https://images.unsplash.com/photo-1529699211952-734e80c4d42b?auto=format&fit=crop&w=300&q=80", Color(0xFFEC4899)),
+                                    Triple("Chess Knight ♞", "https://images.unsplash.com/photo-1586165368502-1bad197a6461?auto=format&fit=crop&w=300&q=80", Color(0xFF8B5CF6)),
+                                    Triple("Chess Rook ♜", "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=300&q=80", Color(0xFF3B82F6)),
+                                    Triple("Chess Bishop ♗", "https://images.unsplash.com/photo-1528819622765-d6bcf132f793?auto=format&fit=crop&w=300&q=80", Color(0xFF10B981))
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                chessAvatars.forEach { (name, url, _) ->
+                                    val isSelected = currentUser?.avatarUrl == url
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .border(
+                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                color = if (isSelected) Color(0xFF10B981) else Color(0xFF334155),
+                                                shape = CircleShape
+                                            )
+                                            .clickable {
+                                                viewModel.updateAvatarUrl(url)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        UserAvatar(avatarUrl = url, username = name, size = 44.dp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // Profile section
                     Text(
                         text = "PROFILE USERNAME",
@@ -1489,19 +1711,21 @@ fun ChatsTab(viewModel: AppViewModel, chats: List<Chat>, friends: List<User>) {
                 }
             }
         } else {
+            val sortedChats = remember(chats) {
+                chats.sortedByDescending { it.lastMessageTimestamp }
+            }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(chats) { chat ->
+                items(sortedChats, key = { it.id }) { chat ->
                     val otherUid = chat.participantUids.firstOrNull { it != viewModel.currentUser.value?.uid } ?: ""
                     val otherUser = friends.find { it.uid == otherUid } ?: User(
                         uid = otherUid,
-                        username = if (otherUid.startsWith("bot_")) {
-                            if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
-                        } else "Gamer Friend",
+                        username = "Gamer Friend",
                         friendId = "",
-                        isOnline = otherUid.startsWith("bot_") && otherUid != "bot_frag"
+                        isOnline = false
                     )
 
                     val timeString = remember(chat.lastMessageTimestamp) {
@@ -1523,25 +1747,13 @@ fun ChatsTab(viewModel: AppViewModel, chats: List<Chat>, friends: List<User>) {
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Avatar with online status
-                            Box {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF334155)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Default.Person, contentDescription = "Avatar", tint = Color.LightGray)
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .clip(CircleShape)
-                                        .background(if (otherUser.isOnline) Color(0xFF10B981) else Color.Gray)
-                                        .align(Alignment.BottomEnd)
-                                )
-                            }
+                            UserAvatar(
+                                avatarUrl = otherUser.avatarUrl,
+                                username = otherUser.username,
+                                size = 44.dp,
+                                showOnlineStatus = true,
+                                isOnline = otherUser.isOnline
+                            )
 
                             Spacer(modifier = Modifier.width(12.dp))
 
@@ -1564,12 +1776,39 @@ fun ChatsTab(viewModel: AppViewModel, chats: List<Chat>, friends: List<User>) {
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = chat.lastMessageText,
-                                    color = Color.LightGray,
-                                    fontSize = 12.sp,
-                                    maxLines = 1
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = chat.lastMessageText,
+                                        color = if (chat.unreadCount > 0) Color.White else Color.LightGray,
+                                        fontWeight = if (chat.unreadCount > 0) FontWeight.SemiBold else FontWeight.Normal,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (chat.unreadCount > 0) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF25D366))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (chat.unreadCount > 99) "99+" else "${chat.unreadCount}",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1654,15 +1893,19 @@ fun FriendsTab(viewModel: AppViewModel, friends: List<User>, searchQuery: String
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.SportsEsports,
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.chat_logo_1784623266173),
                         contentDescription = "Search Friends",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(56.dp)
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .border(1.5.dp, Color.Gray.copy(alpha = 0.5f), CircleShape),
+                        alpha = 0.5f,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Your friends lobby is empty.\nType 'SpeedRunner' or Friend ID 'FC-X4M81Q' above to add a gaming companion instantly!",
+                        text = "Your friends list is empty.\nEnter a friend's username or Friend ID above to add them!",
                         color = Color.Gray,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
@@ -1717,24 +1960,13 @@ fun FriendRow(viewModel: AppViewModel, friend: User) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF334155)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Person, contentDescription = "Avatar", tint = Color.LightGray)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(11.dp)
-                            .clip(CircleShape)
-                            .background(if (friend.isOnline) Color(0xFF10B981) else Color.Gray)
-                            .align(Alignment.BottomEnd)
-                    )
-                }
+                UserAvatar(
+                    avatarUrl = friend.avatarUrl,
+                    username = friend.username,
+                    size = 40.dp,
+                    showOnlineStatus = true,
+                    isOnline = friend.isOnline
+                )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
@@ -1886,16 +2118,28 @@ fun ChatScreen(viewModel: AppViewModel) {
     }
     val otherUser = friends.find { it.uid == otherUid } ?: User(
         uid = otherUid,
-        username = if (otherUid.startsWith("bot_")) {
-            if (otherUid == "bot_speed") "SpeedRunner" else "FragMaster"
-        } else "Gamer Friend",
+        username = "Gamer Friend",
         friendId = "",
-        isOnline = otherUid.startsWith("bot_") && otherUid != "bot_frag"
+        isOnline = false
     )
+
+    LaunchedEffect(activeChat) {
+        if (activeChat.isNotEmpty()) {
+            viewModel.clearUnreadCount(activeChat)
+        }
+    }
 
     // Check if other user is typing in this chat
     val isOtherUserTyping = remember(typingMap, activeChat, otherUid) {
         typingMap[otherUid] == activeChat
+    }
+
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size, activeChat) {
+        if (messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1)
+        }
     }
 
     Scaffold(
@@ -1918,26 +2162,15 @@ fun ChatScreen(viewModel: AppViewModel) {
                     Spacer(modifier = Modifier.width(4.dp))
 
                     // Companion Avatar + Name
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF334155)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Person, contentDescription = "Avatar", tint = Color.LightGray)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(11.dp)
-                                .clip(CircleShape)
-                                .background(if (otherUser.isOnline) Color(0xFF10B981) else Color.Gray)
-                                .align(Alignment.BottomEnd)
-                        )
-                    }
+                    UserAvatar(
+                        avatarUrl = otherUser.avatarUrl,
+                        username = otherUser.username,
+                        size = 40.dp,
+                        showOnlineStatus = true,
+                        isOnline = otherUser.isOnline
+                    )
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
                     Column {
                         Text(
@@ -1970,9 +2203,9 @@ fun ChatScreen(viewModel: AppViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF0F172A))
-                    .navigationBarsPadding()
                     .imePadding()
-                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp),
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Chat text input box
@@ -1983,16 +2216,17 @@ fun ChatScreen(viewModel: AppViewModel) {
                         // Trigger typing indicator as user inserts characters
                         viewModel.setTypingStatus(it.isNotEmpty())
                     },
-                    placeholder = { Text("Send gaming message...") },
+                    placeholder = { Text("Send gaming message...", fontSize = 13.sp) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = Color.Gray
                     ),
+                    maxLines = 3,
                     modifier = Modifier
                         .weight(1f)
-                        .height(52.dp),
+                        .defaultMinSize(minHeight = 48.dp),
                     shape = RoundedCornerShape(24.dp)
                 )
 
@@ -2010,7 +2244,7 @@ fun ChatScreen(viewModel: AppViewModel) {
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color(0xFF0F172A),
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(46.dp)
                         .testTag("send_button"),
                     shape = CircleShape
                 ) {
@@ -2018,9 +2252,11 @@ fun ChatScreen(viewModel: AppViewModel) {
                 }
             }
         },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = Color(0xFF0F172A)
     ) { innerPadding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
@@ -2064,12 +2300,13 @@ fun ChatScreen(viewModel: AppViewModel) {
                                 Card(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary)
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF059669))
                                 ) {
                                     Text(
                                         text = msg.text,
                                         color = Color.White,
                                         fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                                     )
                                 }

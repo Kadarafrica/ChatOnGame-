@@ -265,6 +265,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateAvatarUrl(newAvatarUrl: String, onComplete: ((Boolean, String?) -> Unit)? = null) {
+        _isLoading.value = true
+        ChatRepository.updateAvatarUrl(newAvatarUrl) { result ->
+            _isLoading.value = false
+            result.fold(
+                onSuccess = {
+                    _errorMessage.value = "Profile picture updated successfully!"
+                    onComplete?.invoke(true, null)
+                },
+                onFailure = { error ->
+                    _errorMessage.value = error.message ?: "Avatar update failed."
+                    onComplete?.invoke(false, error.message)
+                }
+            )
+        }
+    }
+
     // Friends functionality
     fun sendFriendRequest() {
         val query = _searchQuery.value.trim()
@@ -300,8 +317,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Chat functionality
+    fun clearUnreadCount(chatId: String) {
+        ChatRepository.clearUnreadCount(chatId)
+    }
+
+    fun openChat(chatId: String) {
+        ChatRepository.clearUnreadCount(chatId)
+        _activeChatId.value = chatId
+        ChatRepository.observeChatMessages(chatId)
+        _currentScreen.value = AppScreen.CHAT
+    }
+
     fun startChatWith(friendUid: String) {
         val chatId = ChatRepository.startChatWith(friendUid)
+        ChatRepository.clearUnreadCount(chatId)
         _activeChatId.value = chatId
         ChatRepository.observeChatMessages(chatId)
         _currentScreen.value = AppScreen.CHAT
@@ -325,9 +354,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Overlay bubble trigger
-    fun startOverlayService(context: Context) {
-        val activeUser = currentUser.value ?: return
-        if (Settings.canDrawOverlays(context)) {
+    fun startOverlayService(context: Context): Boolean {
+        val activeUser = currentUser.value ?: return false
+        val canDraw = try { Settings.canDrawOverlays(context) } catch (e: Exception) { false }
+        if (canDraw) {
             try {
                 val intent = Intent(context, FloatingBubbleService::class.java).apply {
                     _activeChatId.value?.let { putExtra(FloatingBubbleService.EXTRA_CHAT_ID, it) }
@@ -337,19 +367,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     context.startService(intent)
                 }
+                return true
             } catch (e: Exception) {
                 android.util.Log.e("AppViewModel", "Failed to start overlay service", e)
             }
         }
+        return false
     }
 
     fun stopOverlayService(context: Context) {
-        val intent = Intent(context, FloatingBubbleService::class.java)
-        context.stopService(intent)
+        try {
+            val intent = Intent(context, FloatingBubbleService::class.java)
+            context.stopService(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("AppViewModel", "Failed to stop overlay service", e)
+        }
     }
 
     fun checkOverlayPermission(context: Context): Boolean {
-        return Settings.canDrawOverlays(context)
+        return try { Settings.canDrawOverlays(context) } catch (e: Exception) { false }
     }
 
     fun requestOverlayPermission(context: Context) {
